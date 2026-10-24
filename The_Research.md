@@ -303,7 +303,18 @@ physical switchbacks, algorithm accuracy, or a population-wide detection rate**.
 See the [full disagreement audit](results/reference_disagreement_audit.md).
 The revised `compare_detectors.py` also exports overlap groups and pairs.
 
-#### 3.2.6 Remaining validation
+#### 3.2.6 Independent-reference validation (in progress)
+
+The new [angle-comparison script](validate_reference_methods.py) overlays the
+deflection angles and boundaries of both methods at identical FIELDS timestamps.
+It creates diagnostic figures and an initially unlabeled review worksheet.
+The checks cover the four segmentation disagreements, the Laker et al.
+August 31, 2019 example, and an independent
+[E1-E2 visual switchback catalog](https://zenodo.org/records/4579821).
+The independent catalog uses a different event definition.
+**No detector accuracy comparison is complete yet.**
+
+#### 3.2.7 Remaining validation
 
 A full replication must reproduce the published plasma-based Parker-spiral
 reference (including SPAN-i primary measurements and smoothing), apply consistent

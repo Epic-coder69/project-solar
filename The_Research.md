@@ -154,6 +154,51 @@ Current research therefore investigates both the solar origins of magnetic distu
 
 ## 3. Observations and Figures
 
+This section presents observational results obtained from Parker Solar Probe measurements, including magnetic switchback detection, event characterization, statistical distributions, and relationships with other physical quantities.
+
+### 3.1 Initial Magnetic Field Observations
+
+*To be added:*
+
+- FIELDS magnetic-field measurements in RTN coordinates.
+- Time-series graphs of $B_R$, $B_T$, $B_N$, and $|B|$.
+- Identification of interesting magnetic-field rotations.
+- Initial examples of potential switchback events.
+
+### 3.2 Switchback Identification and Characterization
+
+*To be added:*
+
+- Quantitative switchback detection criteria.
+- Detailed graphs of individual detected events.
+- Event start and end times.
+- Duration and magnetic-field rotation angles.
+- Magnetic-field magnitude variations during events.
+- Comparison between different switchback events.
+
+### 3.3 Statistical Properties of Switchbacks
+
+*To be added:*
+
+- Distribution of switchback durations.
+- Distribution of magnetic-field rotation angles.
+- Switchback occurrence rates.
+- Comparison of event properties across observation periods.
+- Statistical patterns and variability.
+
+### 3.4 Relationships with Other Physical Measurements
+
+*To be added:*
+
+- Relationships with heliocentric distance.
+- Solar-wind velocity and Alfvénic behavior.
+- Plasma density and temperature.
+- Magnetic and electric-field fluctuations.
+- Plasma-wave activity and turbulence.
+- Energetic-particle intensity and energy spectra.
+- Derived plasma quantities and statistical correlations.
+- Assessment of statistical significance and measurement limitations.
+
 ## 4. Analysis and Discussion
 
 ## 5. Conclusions

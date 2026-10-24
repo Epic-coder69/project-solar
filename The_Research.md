@@ -354,6 +354,35 @@ The real catalog cross-match **has not yet been executed on the Mac against
 the local survey**, so no catalog-recovery or detector-accuracy result is claimed.
 Published positives alone cannot establish a false-positive rate.
 
+#### 3.2.8 Independent catalog matching and threshold sensitivity
+
+The first cross-match completed against Martinović et al. (2021).
+Seventeen published central switchback intervals fall fully within the
+three shared detector windows (November 1, 5, and 7, 2018).
+With the original rule (at least 50% overlap of the shorter interval),
+the local reference matches **6/17** and Parker-SPC matches **7/17**.
+
+However, the rule counts very short published switchbacks as matched
+to candidate detections lasting many minutes. A sensitivity analysis
+penalizing such boundary mismatch changes the comparison:
+
+| Matching rule | Local | Parker-SPC |
+|---|---:|---:|
+| 50% of shorter interval | 6/17 | 7/17 |
+| Intersection-over-union >= 0.25 | 5/17 | 5/17 |
+| Intersection-over-union >= 0.50 | 4/17 | 3/17 |
+
+Seven of the 17 published events last less than 30 seconds, including
+three below the current detector's ten-second minimum duration. The
+original 7-versus-6 advantage is therefore **not robust to the event
+matching definition**, and no detector is selected at this stage.
+
+These are match fractions for selected windows, not statistical estimates
+of mission-wide accuracy. See the
+[full independent-catalog audit](results/external_catalog_validation_findings.md)
+and [reproducible sensitivity script](external_match_sensitivity.py).
+
+
 **Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
 
 ### 3.3 Statistical Results

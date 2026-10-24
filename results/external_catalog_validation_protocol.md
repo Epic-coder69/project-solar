@@ -18,27 +18,36 @@ python external_switchback_validation.py --self-test
 python external_switchback_validation.py --inspect
 ```
 
-The inspection step downloads the **original** Zenodo file into `data/external/` and prints its HDF5 keys, array shapes, dtypes, and first values. The downloadable HDF5 could not be inspected in the environment where this script was written. **Do not infer the event timestamp interpretation solely from numeric size.** Confirm the SB boundaries and timestamp units from the original file and its Zenodo ReadMe. Select the HDF5 table containing one row per published switchback.
+The HDF5 schema has now been verified by checksum and inspection. It is a
+pandas fixed-format `/basic_data` table with **5,370 region rows**, not 5,370
+independent switchbacks. The published catalog contains **1,074 events**, each
+recorded with five chronological regions (LQR, LTR, SB, TTR, TQR).
+The `block0_values` dataset carries encounter/event number; `block3_values`
+contains nanosecond-resolution start/end timestamps. These fields are decoded
+directly using `h5py`, avoiding deserialization of the pickled `region` column.
+The parser confirms five nonoverlapping regions per unique event and
+extracts the **central SB region**. This central-selection assumption follows
+the published sequence and must be revisited if region labels contradict it.
 
-Next run, replacing the illustrative key and field labels below with the **actual** labels from inspection:
+The real cross-match is now a single command; no manual HDF5 keys or
+timestamp-unit overrides are required:
 
 ```bash
-python external_switchback_validation.py \
-  --h5-key "ACTUAL_HDF5_DATASET_OR_GROUP" \
-  --start-field "ACTUAL_SB_START_FIELD" \
-  --end-field "ACTUAL_SB_END_FIELD" \
-  --time-unit iso \
-  --scope shared
+python external_switchback_validation.py --scope shared
 ```
 
-Supported time interpretations are `iso`, `unix_s`, `unix_ms`, `unix_ns`, `mjd`, and `jd`. Do not use the default `iso` for numeric timestamps. When HDF5 storage is more complex, first extract a *verified* two-column event table to CSV, then use:
+For a second, **non-head-to-head** diagnostic using the 20 available
+local-reference windows, run:
 
 ```bash
-python external_switchback_validation.py \
-  --catalog-csv data/external/verified_martinovic_events.csv \
-  --start-field start_utc --end-field end_utc \
-  --time-unit iso --scope shared
+python external_switchback_validation.py --scope local
 ```
+
+Note that the second invocation writes the same output filenames and replaces
+the shared-window results: copy or commit the shared-window outputs first
+if both are needed. Since the shared comparison contains only three seed
+windows, results may include very few external positives and are not
+sufficient to choose a detector.
 
 Inputs required locally: `data/survey_selected.csv` produced by `switchback_survey.py`, and detector outputs `results/corrected_{local,parker_spc}_{events,audit}.csv`.
 

@@ -67,14 +67,12 @@ Correlations will be interpreted cautiously, distinguishing statistical associat
 
 ## 2. Scientific Background
 
-## 3. Hypotheses and Open Questions
+## 3. Parker Solar Probe Measurements
 
-## 4. Parker Solar Probe Measurements
+## 4. Observations and Figures
 
-## 5. Observations and Figures
+## 5. Analysis and Discussion
 
-## 6. Analysis and Discussion
+## 6. Conclusions
 
-## 7. Conclusions
-
-## 8. References
+## 7. References

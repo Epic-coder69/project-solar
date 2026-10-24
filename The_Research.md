@@ -303,16 +303,31 @@ physical switchbacks, algorithm accuracy, or a population-wide detection rate**.
 See the [full disagreement audit](results/reference_disagreement_audit.md).
 The revised `compare_detectors.py` also exports overlap groups and pairs.
 
-#### 3.2.6 Independent-reference validation (in progress)
+#### 3.2.6 Reference-angle diagnostics and next validation stage
 
-The new [angle-comparison script](validate_reference_methods.py) overlays the
-deflection angles and boundaries of both methods at identical FIELDS timestamps.
-It creates diagnostic figures and an initially unlabeled review worksheet.
-The checks cover the four segmentation disagreements, the Laker et al.
-August 31, 2019 example, and an independent
-[E1-E2 visual switchback catalog](https://zenodo.org/records/4579821).
-The independent catalog uses a different event definition.
-**No detector accuracy comparison is complete yet.**
+Overlays of identical FIELDS one-second measurements against both reference
+directions were generated for the four groups with event-segmentation
+disagreements. Median absolute angle differences were **16.93°** and **15.25°**
+for the two cases where the local detector split a Parker-SPC event, and
+**7.60°** and **4.23°** for the two cases where the Parker-SPC detector
+split a local event. The sample fractions exceeding the 45° trigger
+threshold differed by as much as 12.19 percentage points in these
+selected diagnostic windows; these fractions are **not occurrence rates**.
+
+Qualitative review of the plots finds that differences in background
+direction cause changed threshold-crossing and boundary positions.
+In particular, the November 1 example dips briefly below the local
+30° boundary while the Parker-SPC angle remains elevated.
+Other groups are sensitive to short gaps and the event-merging rule.
+See the [diagnostic results](results/reference_angle_diagnostics.csv)
+and the [visual audit](results/reference_angle_findings.md).
+
+The [review worksheet](results/reference_review_sheet.csv) remains
+unlabeled. The optional published 2019 example plot was not yet
+available in the shared repository, and the independent
+[Martinović et al. E1–E2 catalog](https://doi.org/10.5281/zenodo.4579821)
+has not yet been cross-matched. **Neither method can be declared
+scientifically more accurate at this stage.**
 
 #### 3.2.7 Remaining validation
 

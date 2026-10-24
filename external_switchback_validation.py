@@ -64,6 +64,73 @@ def read_table(path, key):
         return pd.DataFrame(cols)
 
 
+
+def read_martinovic_events(path, expected_count=1074):
+    """Decode /basic_data fixed pandas HDF5 blocks using h5py only.
+
+    The published structure contains five chronologically ordered subregions
+    per physical event: LQR, LTR, SB, TTR, TQR. We extract the central (SB)
+    region, not all five rows. We DO NOT execute the pickled 'region' column.
+    """
+    with h5py.File(path, "r") as f:
+        if "basic_data" not in f:
+            raise ValueError("Expected /basic_data in published source")
+        g = f["basic_data"]
+        identity_fields = [x.decode("utf-8") for x in g["block0_items"][()]]
+        time_fields = [x.decode("utf-8") for x in g["block3_items"][()]]
+        if identity_fields != ["encounter", "event number"] or time_fields != ["start time", "end time"]:
+            raise ValueError(f"Unexpected HDF5 field layout: {identity_fields} / {time_fields}")
+        identifiers = np.asarray(g["block0_values"][()])
+        values = np.asarray(g["block3_values"][()])
+        quality = np.asarray(g["block1_values"][()]).reshape(-1)
+
+    if (identifiers.ndim != 2 or identifiers.shape[1] != 2 or
+        values.ndim != 2 or values.shape[1] != 2 or
+        len(identifiers) != len(values) or len(values) != len(quality)):
+        raise ValueError("Unexpected catalog column dimensions")
+
+    # /basic_data/block3_values explicitly declares datetime64 in its HDF5
+    # attributes, with timestamps stored as Unix epoch nanoseconds.
+    frame = pd.DataFrame({
+        "encounter": identifiers[:, 0],
+        "event_number": identifiers[:, 1],
+        "start": pd.to_datetime(values[:, 0], unit="ns", utc=True).tz_localize(None),
+        "end": pd.to_datetime(values[:, 1], unit="ns", utc=True).tz_localize(None),
+        "QF": quality,
+    })
+    if frame[["start", "end"]].isna().any().any() or (frame["end"] <= frame["start"]).any():
+        raise ValueError("Source contains invalid subregion timestamps")
+
+    groups = frame.groupby(["encounter", "event_number"], sort=False)
+    counts = groups.size()
+    if len(counts) != expected_count or counts.ne(5).any():
+        raise ValueError(
+            f"Expected {expected_count} five-region events; got {len(counts)} event IDs, "
+            f"region counts={counts.value_counts().to_dict()}"
+        )
+
+    # Validate the chronological region order before inferring the SB row.
+    frame = frame.sort_values(["encounter", "event_number", "start", "end"]).copy()
+    frame["position"] = frame.groupby(["encounter", "event_number"], sort=False).cumcount()
+    for key, group in frame.groupby(["encounter", "event_number"]):
+        starts = group["start"].to_numpy(dtype="datetime64[ns]")
+        ends = group["end"].to_numpy(dtype="datetime64[ns]")
+        if np.any(starts[1:] < ends[:-1]):
+            raise ValueError(f"Overlapping subregions for event {key}; inspect source before matching")
+
+    selected = frame.loc[frame["position"].eq(2)].copy()
+    selected["reference_id"] = [
+        f"E{int(enc)}-{int(number)}"
+        for enc, number in zip(selected["encounter"], selected["event_number"])
+    ]
+    result = selected[["reference_id", "start", "end"]].sort_values("start").reset_index(drop=True)
+    print(
+        f"Extracted {len(result)} distinct published events from {len(frame)} five-region rows; "
+        "using chronologically central SB subregion."
+    )
+    return result
+
+
 def pick_fields(frame, start, end):
     fields = {re.sub("[^a-z0-9]", "", str(k).lower()): str(k) for k in frame.columns}
     def resolve(given, options, side):
@@ -107,8 +174,7 @@ def source_events(args):
             inspect_h5(path)
             return None
         if not args.h5_key:
-            inspect_h5(path)
-            raise ValueError("Specify --h5-key and event time fields from inspected HDF5; do not guess.")
+            return read_martinovic_events(path)
         frame = read_table(path, args.h5_key)
     if args.inspect:
         print("CSV columns:", list(frame.columns))
@@ -219,7 +285,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--h5", default="data/external/ApJ_SB_Database.h5")
     p.add_argument("--catalog-csv", help="Normalized or source CSV with event boundary fields")
-    p.add_argument("--h5-key", help="HDF5 dataset/group path determined using --inspect")
+    p.add_argument("--h5-key", help="Override auto-decoding: select a custom HDF5 dataset/group")
     p.add_argument("--start-field")
     p.add_argument("--end-field")
     p.add_argument("--time-unit", choices=("iso", "unix_s", "unix_ms", "unix_ns", "mjd", "jd"),

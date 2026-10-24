@@ -337,6 +337,15 @@ quality flags, test threshold sensitivity, independently review candidates and
 non-candidates, and quantify false positives and missed events before scaling to
 multi-year statistical results.
 
+An independent positive-catalog comparison tool has now been added:
+[external_switchback_validation.py](external_switchback_validation.py), with
+[reproducibility and interpretation protocol](results/external_catalog_validation_protocol.md).
+It targets the Martinović et al. (2021) Encounter 1–2 visually selected catalog,
+using common successfully processed seed windows and one-to-one temporal matching.
+The real external HDF5 has **not yet been parsed and run** in the shared execution
+environment, so no catalog-recovery or detector-accuracy result is claimed.
+Published positives alone cannot establish a false-positive rate.
+
 **Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
 
 ### 3.3 Statistical Results

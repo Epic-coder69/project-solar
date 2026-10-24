@@ -283,7 +283,27 @@ An exploratory SWEAP-SPC Parker-spiral-reference comparison was also run. Its ca
 
 ![Corrected local-background detection at 20181108_0944](figures/corrected_local_strong_20181108_0944_4.png)
 
-#### 3.2.5 Remaining validation
+#### 3.2.5 Cross-reference disagreement analysis
+
+A comparison of the **three observation windows processed successfully by both
+reference methods** (November 1, 5 and 7, 2018) contained 10 local-reference
+detections and 10 Parker-SPC-reference detections. When detections overlapping
+by at least 50% of the shorter interval were assembled into connected groups,
+there were **eight overlapping groups**: four one-to-one, two where the local
+reference split an SPC event, and two where the SPC reference split a local event.
+**No groups were exclusive to a single method** under that overlap rule.
+
+The earlier greedy one-to-one comparison's two local-only and two Parker-only
+labels were misleading: these intervals temporally overlapped detections from
+the other method but could not be matched one-to-one. The actual discrepancies
+primarily concern **event segmentation and boundary placement**.
+
+This result shows timing overlap of magnetic rotations, **not confirmation of
+physical switchbacks, algorithm accuracy, or a population-wide detection rate**.
+See the [full disagreement audit](results/reference_disagreement_audit.md).
+The revised `compare_detectors.py` also exports overlap groups and pairs.
+
+#### 3.2.6 Remaining validation
 
 A full replication must reproduce the published plasma-based Parker-spiral
 reference (including SPAN-i primary measurements and smoothing), apply consistent

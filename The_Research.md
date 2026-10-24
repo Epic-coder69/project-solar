@@ -227,14 +227,102 @@ No population-wide conclusions are drawn from these selected examples.
 
 ### 3.2 Switchback Identification and Characterization
 
-*To be added:*
+#### 3.2.1 Detection Methodology
 
-- Quantitative switchback detection criteria.
-- Detailed graphs of individual detected events.
-- Event start and end times.
-- Duration and magnetic-field rotation angles.
-- Magnetic-field magnitude variations during events.
-- Comparison between different switchback events.
+We implemented a preliminary magnetic-switchback detection benchmark
+using higher-resolution Parker Solar Probe FIELDS measurements.
+
+The detection thresholds follow values used by Laker et al. (2022).
+
+| Detection parameter | Value |
+|---|---|
+| Magnetic deflection trigger | 45 degrees |
+| Event boundary threshold | 30 degrees |
+| Minimum event duration | 10 seconds |
+| Maximum separation for merging | Less than 20 seconds |
+| Processing resolution | 1-second median bins |
+| Reference magnetic field | Local 3-hour rolling median |
+
+The magnetic-field deflection angle is calculated as:
+
+$$
+\theta(t)=\cos^{-1}\left(
+\frac{\mathbf{B}(t)\cdot\mathbf{B}_{bg}(t)}
+{|\mathbf{B}(t)|\,|\mathbf{B}_{bg}(t)|}
+\right)
+$$
+
+**Important limitation:** Our implementation uses a local magnetic-field
+reference rather than the Parker-spiral background calculated from plasma
+velocity and spacecraft position in the published methodology.
+
+Consequently, this is a literature-informed benchmark rather than
+an exact reproduction of the published detector.
+
+#### 3.2.2 Event Characterization
+
+For each detected candidate, the algorithm records:
+
+- Estimated start and end times (UTC).
+- Duration in seconds.
+- Maximum magnetic-field deflection angle.
+- Relative magnetic-field magnitude deviation.
+- Presence of radial magnetic-field reversal.
+
+Event boundaries are algorithmic estimates and require validation.
+
+#### 3.2.3 Preliminary Detection Results
+
+The benchmark successfully evaluated **20 selected high-resolution observation intervals**.
+
+It identified **61 candidate detections** under the specified criteria.
+
+| Original selection | Intervals examined | Candidate detections |
+|---|---:|---:|
+| ambiguous | 5 | 14 |
+| control | 5 | 12 |
+| strong | 10 | 35 |
+
+
+These detections are not yet confirmed magnetic switchbacks.
+They may contain overlapping or repeated events and were obtained
+from a deliberately selected sample rather than an unbiased survey.
+
+Therefore, these counts must not be interpreted as population-wide
+switchback occurrence rates.
+
+#### 3.2.4 Diagnostic Figures
+
+**Example A — November 7, 2018**
+
+![Literature-based detection benchmark, November 7](figures/benchmark_strong_20181107_0332_3.png)
+
+**Example B — November 8, 2018**
+
+![Literature-based detection benchmark, November 8](figures/benchmark_strong_20181108_0944_4.png)
+
+These figures show magnetic-field components, total magnetic-field
+magnitude, and the calculated deflection angle.
+
+The shaded intervals indicate detected magnetic-rotation candidates.
+
+#### 3.2.5 Validation and Limitations
+
+Before producing population statistics, the following work is required:
+
+- Reproduce the published Parker-spiral background calculation.
+- Examine disagreements with the original screening algorithm.
+- Review ambiguous detections and control intervals.
+- Evaluate false positives, missed detections, and data quality.
+- Test the sensitivity of the results to detection thresholds.
+- Identify and remove duplicate event detections.
+
+The present results are preliminary and do not establish
+a complete or validated switchback catalog.
+
+**Reference:** [Laker et al. (2022), Switchback deflections beyond
+the early Parker Solar Probe encounters](https://academic.oup.com/mnras/article/517/1/1001/6692877).
+
 
 ### 3.3 Statistical Results
 

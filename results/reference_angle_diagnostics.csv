@@ -1,0 +1,5 @@
+group_id,date,relationship,figure,paired_valid_seconds,median_absolute_angle_difference_deg,local_fraction_above_45_pct,parker_spc_fraction_above_45_pct
+1,2018-11-01,local_splits,figures/reference_audit_group_01.png,3781,16.93,79.82,80.56
+2,2018-11-05,local_splits,figures/reference_audit_group_02.png,771,15.25,13.23,25.42
+4,2018-11-05,parker_spc_splits,figures/reference_audit_group_04.png,1211,7.6,42.2,45.58
+5,2018-11-05,parker_spc_splits,figures/reference_audit_group_05.png,1009,4.23,47.37,44.5

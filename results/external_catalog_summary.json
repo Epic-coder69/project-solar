@@ -1,0 +1,48 @@
+{
+  "source": "Martinovic et al. 2021 DOI:10.5281/zenodo.4579821",
+  "scope": "shared",
+  "threshold": 0.5,
+  "criterion": "fraction of shorter temporal interval",
+  "exposure_windows": [
+    [
+      "2018-11-01T18:02:30",
+      "2018-11-01T19:23:30"
+    ],
+    [
+      "2018-11-05T13:10:30",
+      "2018-11-05T14:35:30"
+    ],
+    [
+      "2018-11-07T02:52:30",
+      "2018-11-07T04:34:30"
+    ]
+  ],
+  "results": [
+    {
+      "method": "local",
+      "shared_seed_windows": 3,
+      "merged_exposure_windows": 3,
+      "external_catalog_total": 1074,
+      "external_events_fully_in_scope": 17,
+      "detector_intervals_in_scope": 10,
+      "matched_external_events": 6,
+      "unmatched_external_events": 11,
+      "unmatched_detector_intervals": 4,
+      "external_catalog_recovery_fraction": 0.3529,
+      "candidate_catalog_agreement_fraction": 0.6
+    },
+    {
+      "method": "parker_spc",
+      "shared_seed_windows": 3,
+      "merged_exposure_windows": 3,
+      "external_catalog_total": 1074,
+      "external_events_fully_in_scope": 17,
+      "detector_intervals_in_scope": 10,
+      "matched_external_events": 7,
+      "unmatched_external_events": 10,
+      "unmatched_detector_intervals": 3,
+      "external_catalog_recovery_fraction": 0.4118,
+      "candidate_catalog_agreement_fraction": 0.7
+    }
+  ]
+}

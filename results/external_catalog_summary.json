@@ -9,40 +9,84 @@
       "2018-11-01T19:23:30"
     ],
     [
+      "2018-11-02T01:25:30",
+      "2018-11-02T02:45:30"
+    ],
+    [
       "2018-11-05T13:10:30",
       "2018-11-05T14:35:30"
     ],
     [
+      "2018-11-06T12:10:30",
+      "2018-11-06T13:30:30"
+    ],
+    [
       "2018-11-07T02:52:30",
       "2018-11-07T04:34:30"
+    ],
+    [
+      "2018-11-08T08:58:30",
+      "2018-11-08T10:29:30"
+    ],
+    [
+      "2018-11-12T03:40:30",
+      "2018-11-12T05:00:30"
+    ],
+    [
+      "2018-11-20T08:11:30",
+      "2018-11-20T09:32:30"
+    ],
+    [
+      "2018-11-20T21:18:30",
+      "2018-11-20T22:59:30"
+    ],
+    [
+      "2018-11-21T05:10:30",
+      "2018-11-21T06:30:30"
+    ],
+    [
+      "2018-11-27T12:42:30",
+      "2018-11-27T15:34:30"
+    ],
+    [
+      "2018-11-27T18:58:30",
+      "2018-11-27T20:21:30"
+    ],
+    [
+      "2018-11-28T06:37:30",
+      "2018-11-28T08:01:30"
+    ],
+    [
+      "2018-11-29T07:07:30",
+      "2018-11-29T08:37:30"
     ]
   ],
   "results": [
     {
       "method": "local",
-      "shared_seed_windows": 3,
-      "merged_exposure_windows": 3,
+      "shared_seed_windows": 16,
+      "merged_exposure_windows": 14,
       "external_catalog_total": 1074,
-      "external_events_fully_in_scope": 17,
-      "detector_intervals_in_scope": 10,
-      "matched_external_events": 6,
-      "unmatched_external_events": 11,
-      "unmatched_detector_intervals": 4,
-      "external_catalog_recovery_fraction": 0.3529,
-      "candidate_catalog_agreement_fraction": 0.6
+      "external_events_fully_in_scope": 27,
+      "detector_intervals_in_scope": 48,
+      "matched_external_events": 11,
+      "unmatched_external_events": 16,
+      "unmatched_detector_intervals": 37,
+      "external_catalog_recovery_fraction": 0.4074,
+      "candidate_catalog_agreement_fraction": 0.2292
     },
     {
       "method": "parker_spc",
-      "shared_seed_windows": 3,
-      "merged_exposure_windows": 3,
+      "shared_seed_windows": 16,
+      "merged_exposure_windows": 14,
       "external_catalog_total": 1074,
-      "external_events_fully_in_scope": 17,
-      "detector_intervals_in_scope": 10,
-      "matched_external_events": 7,
-      "unmatched_external_events": 10,
-      "unmatched_detector_intervals": 3,
-      "external_catalog_recovery_fraction": 0.4118,
-      "candidate_catalog_agreement_fraction": 0.7
+      "external_events_fully_in_scope": 27,
+      "detector_intervals_in_scope": 44,
+      "matched_external_events": 12,
+      "unmatched_external_events": 15,
+      "unmatched_detector_intervals": 32,
+      "external_catalog_recovery_fraction": 0.4444,
+      "candidate_catalog_agreement_fraction": 0.2727
     }
   ]
 }

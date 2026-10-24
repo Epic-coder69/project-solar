@@ -32,3 +32,32 @@ Neither algorithm is established as ground truth. The Parker-SPC mode is an expl
 **Next diagnostic test:** Overlay the magnetic deflection angle from both reference calculations on the same axes for each of the four segmentation-disagreement groups, mark the 30-degree boundary and 45-degree trigger, inspect local magnitude and data gaps, and compare with plasma velocities where available. Then repeat on independently chosen intervals.
 
 **Reproducibility:** `compare_detectors.py` now produces `data/reference_overlap_groups.csv` and `data/reference_overlap_pairs.csv` from the local event catalogs, using a 50%-of-shorter overlap rule.
+
+
+## Reproduce the angle-curve diagnostics
+
+The code now includes [validate_reference_methods.py](../validate_reference_methods.py).
+It plots identical FIELDS one-second observations against both reference directions,
+marks each method's event boundaries, and writes numerical diagnostics and an
+initially UNLABELED results/reference_review_sheet.csv for manual scientific review.
+
+Run on your Mac:
+
+```bash
+source .venv/bin/activate
+python compare_detectors.py
+python validate_reference_methods.py --self-test
+python validate_reference_methods.py
+```
+
+Add --all for the four one-to-one groups, or --published-example to inspect
+the Laker et al. Figure 1 observation (2019-08-31, approximately 12:35–12:47 UTC).
+Similar appearance does not imply exact replication of their filtered SPAN-i method.
+
+**Independent validation source:** [Martinović et al., PSP E1-E2 manually
+selected switchbacks, Zenodo DOI 10.5281/zenodo.4579821](https://zenodo.org/records/4579821).
+The catalog lists 1,074 visually selected events and uses different event criteria.
+It has NOT yet been imported or statistically compared to this project's detections.
+Manual reviewers should assign switchback-like / other_structure / indeterminate,
+with notes on field polarity, |B| stability, data quality, and available plasma data.
+Catalog agreement alone cannot establish sensitivity/specificity.

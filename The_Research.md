@@ -158,12 +158,24 @@ This section presents observational results obtained from Parker Solar Probe mea
 
 ### 3.1 Initial Magnetic Field Observations
 
-*To be added:*
 
-- FIELDS magnetic-field measurements in RTN coordinates.
-- Time-series graphs of $B_R$, $B_T$, $B_N$, and $|B|$.
-- Identification of interesting magnetic-field rotations.
-- Initial examples of potential switchback events.
+
+
+<!-- AUTOFIGURES-3.1-BEGIN -->
+
+**Dataset:** Parker Solar Probe FIELDS, Level 2, one-minute MAG measurements in RTN coordinates.
+
+The following figures present measured magnetic-field components and preliminary magnetic-rotation candidates.
+
+#### Overview: fields_20181106_1min
+![FIELDS magnetic-field observations](figures/fields_20181106_1min.png)
+
+#### Candidate: candidate_20181106_0218
+![Preliminary magnetic-rotation candidate](figures/candidate_20181106_0218.png)
+
+**Interpretation:** These figures are preliminary. Candidate selection has not yet been validated using higher-cadence data or independent plasma measurements.
+
+<!-- AUTOFIGURES-3.1-END -->
 
 ### 3.2 Switchback Identification and Characterization
 

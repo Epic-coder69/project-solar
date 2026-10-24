@@ -1,0 +1,34 @@
+<svg width="1200" height="700" viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="700" fill="#0b1020"/>
+  <text x="600" y="60" text-anchor="middle" fill="#ffffff" font-size="34" font-family="Arial">Magnetic Switchback: Conceptual Illustration</text>
+
+  <text x="180" y="120" text-anchor="middle" fill="#9ecbff" font-size="24" font-family="Arial">Normal Solar-Wind Magnetic Field</text>
+  <text x="870" y="120" text-anchor="middle" fill="#9ecbff" font-size="24" font-family="Arial">Switchback Structure</text>
+
+  <line x1="80" y1="220" x2="500" y2="220" stroke="#7dd3fc" stroke-width="8"/>
+  <polygon points="500,220 470,205 470,235" fill="#7dd3fc"/>
+  <line x1="80" y1="320" x2="500" y2="320" stroke="#7dd3fc" stroke-width="8"/>
+  <polygon points="500,320 470,305 470,335" fill="#7dd3fc"/>
+  <line x1="80" y1="420" x2="500" y2="420" stroke="#7dd3fc" stroke-width="8"/>
+  <polygon points="500,420 470,405 470,435" fill="#7dd3fc"/>
+
+  <path d="M650 220 C760 220, 770 220, 830 220 C900 220, 920 170, 980 170 C1050 170, 1080 260, 980 300 C900 332, 840 270, 820 250 C790 220, 760 220, 1120 220"
+        fill="none" stroke="#f59e0b" stroke-width="8"/>
+  <polygon points="1120,220 1090,205 1090,235" fill="#f59e0b"/>
+
+  <path d="M650 320 C760 320, 780 320, 840 320 C910 320, 950 370, 1010 370 C1070 370, 1080 280, 1000 245 C930 215, 860 280, 835 300 C800 325, 780 320, 1120 320"
+        fill="none" stroke="#f59e0b" stroke-width="8"/>
+  <polygon points="1120,320 1090,305 1090,335" fill="#f59e0b"/>
+
+  <path d="M650 420 C760 420, 790 420, 850 420 C915 420, 930 470, 980 500 C1030 530, 1080 500, 1040 450 C1010 410, 930 400, 880 405 C820 410, 780 420, 1120 420"
+        fill="none" stroke="#f59e0b" stroke-width="8"/>
+  <polygon points="1120,420 1090,405 1090,435" fill="#f59e0b"/>
+
+  <rect x="520" y="160" width="18" height="320" fill="#94a3b8"/>
+  <rect x="530" y="150" width="18" height="340" fill="#cbd5e1"/>
+  <circle cx="540" cy="320" r="18" fill="#ef4444"/>
+  <text x="540" y="355" text-anchor="middle" fill="#ffffff" font-size="20" font-family="Arial">PSP</text>
+
+  <text x="140" y="590" fill="#cbd5e1" font-size="22" font-family="Arial">Blue lines: ordinary outward magnetic field carried by the solar wind</text>
+  <text x="140" y="625" fill="#cbd5e1" font-size="22" font-family="Arial">Orange lines: a folded / strongly deflected field structure encountered by Parker Solar Probe</text>
+</svg>

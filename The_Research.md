@@ -156,26 +156,74 @@ Current research therefore investigates both the solar origins of magnetic distu
 
 This section presents observational results obtained from Parker Solar Probe measurements, including magnetic switchback detection, event characterization, statistical distributions, and relationships with other physical quantities.
 
-### 3.1 Initial Magnetic Field Observations
+### 3.1 Preliminary Observations
 
+This section presents our initial observations from Parker Solar Probe FIELDS magnetometer measurements.
 
+The investigation begins with one-minute magnetic-field measurements in RTN coordinates, followed by higher-resolution examination of selected magnetic-rotation candidates.
 
+These observations are preliminary. Candidate events have not yet undergone complete physical and statistical validation.
 
-<!-- AUTOFIGURES-3.1-BEGIN -->
+#### Figure 1 — Initial Magnetic Field Measurements
 
-**Dataset:** Parker Solar Probe FIELDS, Level 2, one-minute MAG measurements in RTN coordinates.
-
-The following figures present measured magnetic-field components and preliminary magnetic-rotation candidates.
-
-#### Overview: fields_20181106_1min
 ![FIELDS magnetic-field observations](figures/fields_20181106_1min.png)
 
-#### Candidate: candidate_20181106_0218
-![Preliminary magnetic-rotation candidate](figures/candidate_20181106_0218.png)
+**Observation date:** November 6, 2018.
 
-**Interpretation:** These figures are preliminary. Candidate selection has not yet been validated using higher-cadence data or independent plasma measurements.
+The figure shows the radial, tangential, and normal magnetic-field components, together with the total magnetic-field magnitude.
 
-<!-- AUTOFIGURES-3.1-END -->
+The individual components exhibit substantial temporal variations, including directional reversals.
+
+This overview demonstrates the need for automated screening to identify interesting magnetic structures across extended observation periods.
+
+#### Figure 2 — Promising Magnetic Switchback Candidate
+
+![November 7 magnetic-rotation candidate](figures/highres_strong_20181107_0332.png)
+
+**Observation date:** November 7, 2018, approximately 03:32 UTC.
+
+The measurements reveal a substantial reversal of the radial magnetic-field component, followed by a return toward its previous direction.
+
+The total magnetic-field magnitude appears comparatively stable over much of the interval.
+
+This behavior is consistent with a potential magnetic switchback, although the event requires further validation.
+
+#### Figure 3 — Additional Magnetic Switchback Candidate
+
+![November 20 magnetic-rotation candidate](figures/highres_strong_20181120_2158.png)
+
+**Observation date:** November 20, 2018, approximately 21:58 UTC.
+
+This interval exhibits another pronounced magnetic-field rotation, with a reversal of the radial component.
+
+The event provides an additional example for comparing magnetic-field behavior across different observation periods.
+
+Its physical classification remains preliminary.
+
+#### Figure 4 — Magnetic Rotation with Significant Magnitude Variations
+
+![November 8 magnetic-rotation candidate](figures/highres_strong_20181108_0944.png)
+
+**Observation date:** November 8, 2018, approximately 09:44 UTC.
+
+Unlike the previous examples, this interval exhibits substantial variations in the total magnetic-field magnitude alongside changes in field direction.
+
+This example illustrates why a large magnetic rotation alone is insufficient to establish the presence of a switchback.
+
+Further examination is necessary to determine whether the variations represent physical plasma structures, instrumental effects, or other magnetic disturbances.
+
+#### Preliminary Findings
+
+Our initial investigation demonstrates that:
+
+1. Parker Solar Probe FIELDS measurements contain substantial magnetic-field rotations and radial reversals.
+2. Some candidate events exhibit relatively stable magnetic-field magnitude despite large directional changes.
+3. Other events exhibit significant magnetic-field magnitude variations.
+4. Automated screening can identify intervals for further investigation, but its classifications require validation.
+
+These observations motivate the development of more rigorous switchback detection and characterization methods in Section 3.2.
+
+No population-wide conclusions are drawn from these selected examples.
 
 ### 3.2 Switchback Identification and Characterization
 
@@ -188,7 +236,7 @@ The following figures present measured magnetic-field components and preliminary
 - Magnetic-field magnitude variations during events.
 - Comparison between different switchback events.
 
-### 3.3 Statistical Properties of Switchbacks
+### 3.3 Statistical Results
 
 *To be added:*
 

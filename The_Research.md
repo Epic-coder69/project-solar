@@ -227,102 +227,71 @@ No population-wide conclusions are drawn from these selected examples.
 
 ### 3.2 Switchback Identification and Characterization
 
-#### 3.2.1 Detection Methodology
+#### 3.2.1 Detector and reference definitions
 
-We implemented a preliminary magnetic-switchback detection benchmark
-using higher-resolution Parker Solar Probe FIELDS measurements.
+Our benchmark retains the angular detection thresholds used by Laker et al. (2022):
+45° trigger, 30° boundary, 10-second minimum duration, and merging separated
+segments when the intervening valid-data gap is less than 20 seconds.
 
-The detection thresholds follow values used by Laker et al. (2022).
-
-| Detection parameter | Value |
-|---|---|
-| Magnetic deflection trigger | 45 degrees |
-| Event boundary threshold | 30 degrees |
-| Minimum event duration | 10 seconds |
-| Maximum separation for merging | Less than 20 seconds |
-| Processing resolution | 1-second median bins |
-| Reference magnetic field | Local 3-hour rolling median |
-
-The magnetic-field deflection angle is calculated as:
+For this **local-background benchmark**, the magnetic deflection angle is
+calculated against a 181-minute rolling median of the magnetic RTN components:
 
 $$
-\theta(t)=\cos^{-1}\left(
-\frac{\mathbf{B}(t)\cdot\mathbf{B}_{bg}(t)}
-{|\mathbf{B}(t)|\,|\mathbf{B}_{bg}(t)|}
-\right)
+\theta(t)=\cos^{-1}\left(\frac{\mathbf{B}(t)\cdot\mathbf{B}_{bg}(t)}{|\mathbf{B}(t)|\,|\mathbf{B}_{bg}(t)|}\right).
 $$
 
-**Important limitation:** Our implementation uses a local magnetic-field
-reference rather than the Parker-spiral background calculated from plasma
-velocity and spacecraft position in the published methodology.
+The independent magnitude reference is the 181-minute rolling median of **scalar**
+$|\mathbf{B}|$, not the magnitude of the component-wise median vector.
+Magnitude deviations are reported as percentages of this scalar reference.
 
-Consequently, this is a literature-informed benchmark rather than
-an exact reproduction of the published detector.
+This benchmark is **not an exact reproduction** of Laker et al.'s Parker-spiral
+method. The optional `parker-spc` mode uses good-quality SWEAP SPC Level 3
+primary-proton radial velocity, spacecraft HCI position, an assumed 2.5 solar-radius
+source surface and local magnetic-sector polarity. It is exploratory: the published
+method primarily uses SPAN-i measurements and a filtered velocity reference.
 
-#### 3.2.2 Event Characterization
+#### 3.2.2 Event catalog and data-quality safeguards
 
-For each detected candidate, the algorithm records:
+The detector uses one-second median magnetic samples; missing samples are not
+interpolated. Each event records a peak angle, estimated start and end, radial
+reversal, scalar-field-magnitude deviation, and reference method.
 
-- Estimated start and end times (UTC).
-- Duration in seconds.
-- Maximum magnetic-field deflection angle.
-- Relative magnetic-field magnitude deviation.
-- Presence of radial magnetic-field reversal.
+An event that begins or ends at the analysis-window boundary (or adjacent
+to a missing angular sample) is **censored**: its complete duration is unknown.
+Its `duration_seconds` is left blank, while `observed_span_seconds` is retained.
+Duplicated detections from overlapping seed windows are consolidated in the
+corrected catalog. All detections remain **unvalidated magnetic rotations**.
 
-Event boundaries are algorithmic estimates and require validation.
+#### 3.2.3 Corrected preliminary results
 
-#### 3.2.3 Preliminary Detection Results
+- Selected windows successfully processed: **20**.
+- Original seed-associated detections after global deduplication: **57**.
+- Duplicate observations consolidated: **4**.
+- Boundary/gap-censored detections: **3**.
+- Median duration among only uncensored detected intervals: **223 seconds**.
+- Median absolute scalar $|B|$ deviation across detected intervals: **6.13%**.
 
-The benchmark successfully evaluated **20 selected high-resolution observation intervals**.
+These values describe a deliberately selected set of observation windows. They are
+**not** population-wide occurrence rates, event-confirmation statistics, or an
+estimate of false-positive rate.
 
-It identified **61 candidate detections** under the specified criteria.
+An exploratory SWEAP-SPC Parker-spiral-reference comparison was also run. Its catalog contains **10 unvalidated intervals**. It is NOT the full Laker et al. method.
 
-| Original selection | Intervals examined | Candidate detections |
-|---|---:|---:|
-| ambiguous | 5 | 14 |
-| control | 5 | 12 |
-| strong | 10 | 35 |
+#### 3.2.4 Selected diagnostic figures
 
+![Corrected local-background detection at 20181107_0332](figures/corrected_local_strong_20181107_0332_3.png)
 
-These detections are not yet confirmed magnetic switchbacks.
-They may contain overlapping or repeated events and were obtained
-from a deliberately selected sample rather than an unbiased survey.
+![Corrected local-background detection at 20181108_0944](figures/corrected_local_strong_20181108_0944_4.png)
 
-Therefore, these counts must not be interpreted as population-wide
-switchback occurrence rates.
+#### 3.2.5 Remaining validation
 
-#### 3.2.4 Diagnostic Figures
+A full replication must reproduce the published plasma-based Parker-spiral
+reference (including SPAN-i primary measurements and smoothing), apply consistent
+quality flags, test threshold sensitivity, independently review candidates and
+non-candidates, and quantify false positives and missed events before scaling to
+multi-year statistical results.
 
-**Example A — November 7, 2018**
-
-![Literature-based detection benchmark, November 7](figures/benchmark_strong_20181107_0332_3.png)
-
-**Example B — November 8, 2018**
-
-![Literature-based detection benchmark, November 8](figures/benchmark_strong_20181108_0944_4.png)
-
-These figures show magnetic-field components, total magnetic-field
-magnitude, and the calculated deflection angle.
-
-The shaded intervals indicate detected magnetic-rotation candidates.
-
-#### 3.2.5 Validation and Limitations
-
-Before producing population statistics, the following work is required:
-
-- Reproduce the published Parker-spiral background calculation.
-- Examine disagreements with the original screening algorithm.
-- Review ambiguous detections and control intervals.
-- Evaluate false positives, missed detections, and data quality.
-- Test the sensitivity of the results to detection thresholds.
-- Identify and remove duplicate event detections.
-
-The present results are preliminary and do not establish
-a complete or validated switchback catalog.
-
-**Reference:** [Laker et al. (2022), Switchback deflections beyond
-the early Parker Solar Probe encounters](https://academic.oup.com/mnras/article/517/1/1001/6692877).
-
+**Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
 
 ### 3.3 Statistical Results
 

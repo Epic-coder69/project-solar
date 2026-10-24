@@ -1,7 +1,7 @@
 # Project Solar  
 ## Magnetic Switchbacks and Their Possible Causes
 
-![Conceptual illustration of a magnetic switchback](figures/switchback_illustration.svg)
+![Magnetic switchback formation through interchange reconnection](figures/switchback_illustration.png)
 
 ### Introduction
 

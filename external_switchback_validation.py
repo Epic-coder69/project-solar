@@ -278,7 +278,30 @@ def self_test():
                             (t+td(seconds=20), t+td(seconds=40))]) == [(t, t+td(seconds=40))]
     assert not contained(t, t+td(seconds=50), [(t, t+td(seconds=10))])
     assert pick_fields(pd.DataFrame(columns=["SB_Start", "SB_End"]), None, None) == ("SB_Start", "SB_End")
-    print("PASS: overlap thresholds, one-to-one matching, exposure merging, time-field detection")
+    # Simulate the published five-region fixed-format HDF5 structure.
+    import tempfile
+    with tempfile.TemporaryDirectory() as temporary:
+        fixture = Path(temporary) / "synthetic_catalog.h5"
+        identifiers, boundaries, flags = [], [], []
+        base = pd.Timestamp("2018-11-01T00:00:00")
+        for event in range(2):
+            for position in range(5):
+                start = base + pd.Timedelta(minutes=event * 10 + position)
+                identifiers.append((1, event))
+                boundaries.append((start.value, (start + pd.Timedelta(minutes=1)).value))
+                flags.append((1.0,))
+        with h5py.File(fixture, "w") as h:
+            g = h.create_group("basic_data")
+            g.create_dataset("block0_items", data=np.array([b"encounter", b"event number"]))
+            g.create_dataset("block3_items", data=np.array([b"start time", b"end time"]))
+            g.create_dataset("block0_values", data=np.asarray(identifiers, dtype="int64"))
+            g.create_dataset("block3_values", data=np.asarray(boundaries, dtype="int64"))
+            g.create_dataset("block1_values", data=np.asarray(flags, dtype="float64"))
+        extracted = read_martinovic_events(fixture, expected_count=2)
+        assert len(extracted) == 2
+        assert extracted.loc[0, "reference_id"] == "E1-0"
+        assert extracted.loc[0, "start"] == base + pd.Timedelta(minutes=2)
+    print("PASS: overlap thresholds, one-to-one matching, exposure merging, timestamp decoding, and five-region catalog extraction")
 
 
 def main():

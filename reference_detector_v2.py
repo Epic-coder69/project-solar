@@ -31,7 +31,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from psp_fields import get_day
-from switchback_survey import read_high
+from psp_highres import read_high
 
 DATA = Path('data')
 FIG = Path('figures')
@@ -389,7 +389,9 @@ def main():
         p.error('--top must be nonnegative')
     catalog=DATA/'survey_selected.csv'
     if not catalog.exists():
-        p.error('Missing data/survey_selected.csv. Run existing survey first.')
+        catalog=Path('config/survey_selected.csv')
+    if not catalog.exists():
+        p.error('Missing selected-window catalog (data/ or config/survey_selected.csv).')
     seeds=pd.read_csv(catalog)
     seeds['priority']=seeds.category.map({'strong':0,'ambiguous':1,'control':2}).fillna(3)
     seeds=seeds.sort_values(['priority','start'])

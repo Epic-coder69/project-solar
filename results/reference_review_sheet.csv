@@ -1,5 +1,0 @@
-group_id,date,relationship,figure,reviewer,manual_classification,boundary_quality,notes,reviewed_utc
-1,2018-11-01,local_splits,figures/reference_audit_group_01.png,,,,,
-2,2018-11-05,local_splits,figures/reference_audit_group_02.png,,,,,
-4,2018-11-05,parker_spc_splits,figures/reference_audit_group_04.png,,,,,
-5,2018-11-05,parker_spc_splits,figures/reference_audit_group_05.png,,,,,

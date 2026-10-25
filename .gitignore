@@ -1,4 +1,16 @@
-
+# Local environment, NASA caches and intermediate analysis
 .venv/
+venv/
 data/
 __pycache__/
+*.py[cod]
+.DS_Store
+*.part
+*.bak
+.pytest_cache/
+
+# Newly generated plots/candidate outputs stay local by default.
+figures/*.png
+figures/holdout_review/
+results/*.csv
+results/*.json

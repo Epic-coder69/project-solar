@@ -275,7 +275,7 @@ These values describe a deliberately selected set of observation windows. They a
 **not** population-wide occurrence rates, event-confirmation statistics, or an
 estimate of false-positive rate.
 
-An exploratory SWEAP-SPC Parker-spiral-reference comparison was also run. Its catalog contains **10 unvalidated intervals**. It is NOT the full Laker et al. method.
+An initial exploratory SWEAP-SPC Parker-spiral comparison covered three selected windows and returned **10 unvalidated intervals**; it was later expanded to 16 common windows. It is NOT the full Laker et al. method.
 
 #### 3.2.4 Selected diagnostic figures
 
@@ -300,7 +300,7 @@ primarily concern **event segmentation and boundary placement**.
 
 This result shows timing overlap of magnetic rotations, **not confirmation of
 physical switchbacks, algorithm accuracy, or a population-wide detection rate**.
-See the [full disagreement audit](results/reference_disagreement_audit.md).
+See the [full disagreement audit](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/reference_disagreement_audit.md).
 The revised `compare_detectors.py` also exports overlap groups and pairs.
 
 #### 3.2.6 Reference-angle diagnostics and next validation stage
@@ -319,10 +319,10 @@ direction cause changed threshold-crossing and boundary positions.
 In particular, the November 1 example dips briefly below the local
 30° boundary while the Parker-SPC angle remains elevated.
 Other groups are sensitive to short gaps and the event-merging rule.
-See the [diagnostic results](results/reference_angle_diagnostics.csv)
-and the [visual audit](results/reference_angle_findings.md).
+See the [diagnostic results](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/reference_angle_diagnostics.csv)
+and the [visual audit](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/reference_angle_findings.md).
 
-The [review worksheet](results/reference_review_sheet.csv) remains
+The [review worksheet](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/reference_review_sheet.csv) remains
 unlabeled. The optional published 2019 example plot was not yet
 available in the shared repository, and the independent
 [Martinović et al. E1–E2 catalog](https://doi.org/10.5281/zenodo.4579821)
@@ -339,7 +339,7 @@ multi-year statistical results.
 
 An independent positive-catalog comparison tool has now been added:
 [external_switchback_validation.py](external_switchback_validation.py), with
-[reproducibility and interpretation protocol](results/external_catalog_validation_protocol.md).
+[reproducibility and interpretation protocol](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/external_catalog_validation_protocol.md).
 It targets the Martinović et al. (2021) Encounter 1–2 visually selected catalog,
 using common successfully processed seed windows and one-to-one temporal matching.
 The external HDF5 schema is checksum-verified. Its 5,370 entries represent
@@ -350,8 +350,7 @@ switchback interval (the published LQR–LTR–SB–TTR–TQR sequence). It uses
 nanosecond-resolution timestamps from `/basic_data/block3_values` without
 deserializing the file's pickled region column.
 
-The real catalog cross-match **has not yet been executed on the Mac against
-the local survey**, so no catalog-recovery or detector-accuracy result is claimed.
+The archived catalog cross-match was subsequently completed and is reported in Sections 3.2.8–3.2.9; none of its exploratory match fractions establish detector accuracy.
 Published positives alone cannot establish a false-positive rate.
 
 #### 3.2.8 Independent catalog matching and threshold sensitivity
@@ -379,7 +378,7 @@ matching definition**, and no detector is selected at this stage.
 
 These are match fractions for selected windows, not statistical estimates
 of mission-wide accuracy. See the
-[full independent-catalog audit](results/external_catalog_validation_findings.md)
+[full independent-catalog audit](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/external_catalog_validation_findings.md)
 and [reproducible sensitivity script](external_match_sensitivity.py).
 
 
@@ -411,7 +410,7 @@ This selected-window, positive-catalog comparison does **not** measure
 mission-wide recall, false-positive rate, or specificity. We will not
 choose or freeze either algorithm until we inspect boundary failures and
 review a separate, independently sampled test set including non-events.
-See the [expanded comparison and limitations](results/external_catalog_validation_findings.md).
+See the [expanded comparison and limitations](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/external_catalog_validation_findings.md).
 
 
 **Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
@@ -420,7 +419,7 @@ See the [expanded comparison and limitations](results/external_catalog_validatio
 
 To address selection bias from the initial 20 screened windows, a new
 [held-out experiment](independent_holdout.py) and
-[preregistered protocol](results/holdout_protocol.md) have been added.
+[preregistered protocol](https://github.com/Epic-coder69/project-solar/blob/archive/pre-cleanup-2026-10-25/results/holdout_protocol.md) have been added.
 
 The experiment samples published Martinović et al. Encounter-1 switchback
 intervals that do not overlap any original analysis exposure. It also
@@ -477,6 +476,17 @@ See the [holdout findings and complete caveats](results/holdout_findings.md).
 SWEAP plasma velocity, followed by a fixed-threshold assessment of
 complete, non-censored boundaries before selecting a detector for statistical
 analysis.
+
+### Repository provenance
+
+The scripts, diagnostic catalogs and intermediate plots used during
+method development have been archived on the
+[pre-cleanup Git branch](https://github.com/Epic-coder69/project-solar/tree/archive/pre-cleanup-2026-10-25).
+Links to intermediate evidence below refer to that preserved snapshot.
+The maintained FIELDS code and a small number of final catalogs/figures
+remain on the main branch. The replacement four-samples-per-cycle loader
+requires verification against the original local analysis environment before
+claiming full rerun equivalence.
 
 ### 3.3 Statistical Results
 

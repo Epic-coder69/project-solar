@@ -93,3 +93,55 @@ Neither method should be declared superior yet.
 
 **Research status:** an independent positive-catalog comparison has been run,
 but has not established detector accuracy or a final detection method.
+
+
+## Expanded shared-window comparison — October 25, 2026
+
+The subsequent run analyzed **16 of the 20 selected survey seed windows**
+with both methods. Four Parker-SPC seed windows had insufficient reference
+coverage (2018-11-25 21:29, 2018-11-26 20:25, 2018-11-26 22:20, and
+2018-11-27 04:33 UTC) and were **excluded from the common-window comparison**.
+The 16 shared seeds merge to **14 exposure intervals**, containing **27**
+published central switchback intervals fully within their boundaries.
+
+The local method produced **48** candidate intervals in the shared exposures;
+the Parker-SPC approximation produced **44**. Results are reproducible from
+[`external_catalog_summary.json`](external_catalog_summary.json),
+[`external_match_sensitivity.csv`](external_match_sensitivity.csv), and the
+individual [matched pairs](external_match_sensitivity_pairs.csv).
+
+| Matching rule | Local reference | Parker-SPC approximation |
+|---|---:|---:|
+| At least 50% overlap of shorter event | 11/27 | 12/27 |
+| At least 50% reference and 25% detector overlap | 8/27 | 8/27 |
+| IoU >= 0.10 | 10/27 | 12/27 |
+| **IoU >= 0.25** | **9/27** | **9/27** |
+| IoU >= 0.50 | 7/27 | 5/27 |
+| >= 30 seconds AND balanced overlap | 7/27 | 7/27 |
+
+The difference remains **highly dependent on the definition of an event
+match**, with no defensible winner. These counts measure overlap with
+**visually selected positives in preselected windows**; they cannot estimate
+mission-wide sensitivity, precision, specificity, or false-positive rate.
+
+### Illustrative boundary agreement
+
+Published event **E1-457** on November 8 has strong alignment with both
+detectors: local IoU about **0.944**, Parker-SPC IoU about **0.947**.
+Other detections have implausibly broad durations. In particular, the
+published few-second **E1-233** and one-minute **E1-338** events can be counted
+by the shorter-event overlap rule even when less than **3%** of the detector's
+long interval overlaps the published event. This is why a balanced metric is
+essential.
+
+### Implications for the next experiment
+
+1. Keep both methods as unvalidated **candidate screeners**, not competing
+   established classifiers.
+2. Compare published intervals with no detected events, and independently
+   review representative negative/control periods and problematic boundaries.
+3. Investigate four unusable Parker-SPC windows: the velocity reference was
+   missing, not proof that switchbacks were absent.
+4. Plan evaluation on **independently sampled observation intervals**, not
+   only the windows prioritized by the initial detector, before freezing
+   an algorithm for population-rate studies.

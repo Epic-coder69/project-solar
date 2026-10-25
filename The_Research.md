@@ -445,6 +445,39 @@ the positive catalog is not exhaustive and the sampled strata are selected.
 **Status: code and protocol committed; the spacecraft-data holdout run and
 manual classification are not yet complete.** A detector has not been frozen.
 
+#### 3.2.11 Independent holdout results — completed analysis, manual review pending
+
+The frozen independent holdout contains **10 cataloged Encounter-1 switchbacks**
+and **10 catalog-clear, unlabeled intervals**, excluding the original
+candidate-selection exposure windows. Both magnetic-reference methods
+successfully processed **all 20** held-out intervals, with at least 98.72%
+valid 1-second angle data in their respective evaluation regions.
+
+Both detector methods produce *some temporally overlapping magnetic candidate*
+for all **10/10 published positives**. However, **event-boundary agreement**
+is substantially lower: at IoU >=0.25, both methods match **2/10** published
+events (H003/E1-104 and H006/E1-129); at IoU >=0.50 the local method matches
+**2/10**, versus **1/10** for Parker-SPC. Some detector intervals are
+much broader than the cataloged switchback, and edge-censored intervals
+have incomplete duration. Two of the published events last only about
+3.50 seconds, below the 10-second minimum-event setting in both detectors.
+
+Both methods also flag **7/10 identical catalog-clear intervals**. Since
+the external event catalog is not exhaustive, these are *unlabeled candidate
+detections*, **not demonstrated false positives**.
+
+The raw holdout review graphs have been generated, but the
+[manual blind review sheet](results/holdout_blind_review.csv)
+contains no classifications. Hence **no reliable false-positive rate,
+sensitivity/specificity estimate, or scientific winner** is established.
+The sample is also too small to justify population-wide performance claims.
+See the [holdout findings and complete caveats](results/holdout_findings.md).
+
+**Next step:** blinded physical event review with FIELDS and, where possible,
+SWEAP plasma velocity, followed by a fixed-threshold assessment of
+complete, non-censored boundaries before selecting a detector for statistical
+analysis.
+
 ### 3.3 Statistical Results
 
 *To be added:*

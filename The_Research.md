@@ -383,6 +383,37 @@ of mission-wide accuracy. See the
 and [reproducible sensitivity script](external_match_sensitivity.py).
 
 
+
+#### 3.2.9 Expanded shared-window validation
+
+We expanded the Parker-SPC run to all 20 original seed windows, successfully
+processing **16** with both detectors. The remaining four lacked adequate
+SPC reference coverage and were excluded from the head-to-head comparison.
+The 16 shared seeds form **14** merged observation windows containing **27**
+published Martinović et al. central switchback intervals.
+
+The local detector reported **48** candidate intervals within shared coverage,
+while Parker-SPC reported **44**. Independent-catalog matching yielded:
+
+| Event matching rule | Local | Parker-SPC |
+|---|---:|---:|
+| 50% overlap of shorter event | 11/27 | 12/27 |
+| IoU >= 0.25 | **9/27** | **9/27** |
+| IoU >= 0.50 | 7/27 | 5/27 |
+
+These results confirm that **there is no stable accuracy winner** under the
+criteria tested. Good matches exist (for example, published event E1-457 is
+closely bounded by both detectors), but long detector intervals also overlap
+published switchbacks lasting only seconds, limiting the usefulness of
+the looser rule.
+
+This selected-window, positive-catalog comparison does **not** measure
+mission-wide recall, false-positive rate, or specificity. We will not
+choose or freeze either algorithm until we inspect boundary failures and
+review a separate, independently sampled test set including non-events.
+See the [expanded comparison and limitations](results/external_catalog_validation_findings.md).
+
+
 **Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
 
 ### 3.3 Statistical Results

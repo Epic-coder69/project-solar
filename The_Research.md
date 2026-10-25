@@ -416,6 +416,35 @@ See the [expanded comparison and limitations](results/external_catalog_validatio
 
 **Reference:** [Laker et al. (2022)](https://academic.oup.com/mnras/article/517/1/1001/6692877).
 
+#### 3.2.10 Independent holdout study (prepared, not yet run)
+
+To address selection bias from the initial 20 screened windows, a new
+[held-out experiment](independent_holdout.py) and
+[preregistered protocol](results/holdout_protocol.md) have been added.
+
+The experiment samples published Martinović et al. Encounter-1 switchback
+intervals that do not overlap any original analysis exposure. It also
+samples uniformly timed catalog-clear intervals, restricted to the published
+encounter time range and to sufficiently observed dates. A catalog-clear
+interval is **unlabeled**, never assumed to be a true negative.
+
+Selection uses a fixed pseudorandom seed, excludes all original selected
+windows (including their reference-estimation margins), forbids overlapping
+holdout exposures, and records a frozen manifest hash. Both reference
+methods will be evaluated on the identical holdout intervals using the
+unchanged 30-degree boundary, 45-degree trigger, 10-second duration,
+and less-than-20-second gap-merging settings. Insufficient FIELDS or
+SWEAP coverage is audited separately.
+
+Planned outputs are publication-positive IoU comparisons at 0.25 and
+0.50, catalog-clear candidate flag counts, and **blinded raw FIELDS
+plots with empty human-review classifications**. These are not estimates
+of mission-wide sensitivity, specificity, or false-positive rate because
+the positive catalog is not exhaustive and the sampled strata are selected.
+
+**Status: code and protocol committed; the spacecraft-data holdout run and
+manual classification are not yet complete.** A detector has not been frozen.
+
 ### 3.3 Statistical Results
 
 *To be added:*

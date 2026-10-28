@@ -16,7 +16,6 @@ physical event classifier. Event segmentation is still under investigation.
 | `magnetic_data_reader.py` | One magnetic-field reader for one-minute and four-samples-per-cycle FIELDS data |
 | `magnetic_data_visualization.py` | Daily magnetic-field overview plots |
 | `magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
-| `config/survey_selected.csv` | Frozen set of 20 exploratory November 2018 seed windows |
 | `results/` | Small set of retained detector catalogs and final validation summary |
 | `figures/` | Illustrations and figures used in the research document |
 
@@ -32,7 +31,7 @@ Python 3.10+ recommended.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r external_libraries_requirements.txt
 ```
 
 Raw NASA CDF data belong in the git-ignored `data/` cache. The loaders use
@@ -60,9 +59,14 @@ python magnetic_data_analysis.py --self-test
 python magnetic_data_analysis.py --top 1 --reference local --no-plots
 ```
 
-The full frozen selection is available with `--top 0`; `--top 1` is just a
-quick functional run. Results are generated under `data/` and intentionally
-are **not automatically committed**.
+The 20 frozen exploratory observation windows are built into
+`magnetic_data_analysis.py` (no separate `config/` folder). Use `--top 0` to
+analyze all of them, or `--top 1` for a quick functional run. To analyze your
+own windows, pass `--windows-csv path/to/your.csv` with `start,end,category`
+columns. A previous local `data/survey_selected.csv` is **not automatically
+loaded**; specify it explicitly with `--windows-csv data/survey_selected.csv`
+if you want the original local selection. Results are generated under `data/`
+and intentionally are **not automatically committed**.
 
 An **experimental** Parker-spiral comparison is available via
 `--reference parker-spc` (requires SWEAP SPC proton velocity/position files).

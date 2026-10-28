@@ -42,6 +42,38 @@ MIN_SECONDS, MERGE_SECONDS = 10, 20
 SOLAR_RADIUS_KM = 695700.
 OMEGA_SUN_RAD_S = 2 * np.pi / (25.38 * 86400.)
 
+# Frozen November 2018 exploratory intervals from the original survey.
+# These are candidate-selection windows, NOT confirmed physical switchbacks.
+# The original saved start/end values were reconstructed during cleanup;
+# check against the user's original local catalog before publication-grade reruns.
+FROZEN_SURVEY_WINDOWS = (
+    ("2018-11-27T13:22:30", "2018-11-27T13:31:30", "strong"),
+    ("2018-11-20T21:58:30", "2018-11-20T22:19:30", "strong"),
+    ("2018-11-07T03:32:30", "2018-11-07T03:54:30", "strong"),
+    ("2018-11-01T18:42:30", "2018-11-01T18:43:30", "strong"),
+    ("2018-11-27T19:38:30", "2018-11-27T19:41:30", "strong"),
+    ("2018-11-08T09:44:30", "2018-11-08T09:49:30", "strong"),
+    ("2018-11-27T04:33:30", "2018-11-27T04:46:30", "strong"),
+    ("2018-11-05T13:50:30", "2018-11-05T13:55:30", "strong"),
+    ("2018-11-25T21:29:30", "2018-11-25T21:51:30", "strong"),
+    ("2018-11-29T07:47:30", "2018-11-29T07:57:30", "strong"),
+    ("2018-11-08T09:38:30", "2018-11-08T09:41:30", "ambiguous"),
+    ("2018-11-26T20:25:30", "2018-11-26T20:26:30", "ambiguous"),
+    ("2018-11-28T07:17:30", "2018-11-28T07:21:30", "ambiguous"),
+    ("2018-11-27T14:50:30", "2018-11-27T14:54:30", "ambiguous"),
+    ("2018-11-20T08:51:30", "2018-11-20T08:52:30", "ambiguous"),
+    ("2018-11-21T05:50:30", "2018-11-21T05:50:30", "control"),
+    ("2018-11-12T04:20:30", "2018-11-12T04:20:30", "control"),
+    ("2018-11-06T12:50:30", "2018-11-06T12:50:30", "control"),
+    ("2018-11-26T22:20:30", "2018-11-26T22:20:30", "control"),
+    ("2018-11-02T02:05:30", "2018-11-02T02:05:30", "control"),
+)
+
+
+def default_windows():
+    """Return the 20 frozen survey intervals without requiring a CSV file."""
+    return pd.DataFrame(FROZEN_SURVEY_WINDOWS, columns=["start", "end", "category"])
+
 @lru_cache(maxsize=5)
 def high_for_day(day):
     return read_high(day)
@@ -381,17 +413,23 @@ def main():
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
     p.add_argument('--self-test',action='store_true')
     p.add_argument('--no-plots',action='store_true')
+    p.add_argument('--windows-csv',type=Path,default=None,
+                   help='Optional alternate start,end,category CSV; otherwise use built-in 20 windows')
     a=p.parse_args()
     if a.self_test:
         self_test();return
     if a.top<0:
         p.error('--top must be nonnegative')
-    catalog=DATA/'survey_selected.csv'
-    if not catalog.exists():
-        catalog=Path('config/survey_selected.csv')
-    if not catalog.exists():
-        p.error('Missing selected-window catalog (data/ or config/survey_selected.csv).')
-    seeds=pd.read_csv(catalog)
+    # Default candidates are stored here; a separate file is optional.
+    if a.windows_csv is None:
+        seeds=default_windows()
+    else:
+        if not a.windows_csv.is_file():
+            p.error(f'Windows CSV does not exist: {a.windows_csv}')
+        seeds=pd.read_csv(a.windows_csv)
+        required={'start','end','category'}
+        if not required.issubset(seeds.columns):
+            p.error('Windows CSV must contain start,end,category columns')
     seeds['priority']=seeds.category.map({'strong':0,'ambiguous':1,'control':2}).fillna(3)
     seeds=seeds.sort_values(['priority','start'])
     if a.top:

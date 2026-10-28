@@ -13,9 +13,10 @@ physical event classifier. Event segmentation is still under investigation.
 | Path | Purpose |
 |---|---|
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
-| `magnetic_data_reader.py` | One magnetic-field reader for one-minute and four-samples-per-cycle FIELDS data |
-| `magnetic_data_visualization.py` | Daily magnetic-field overview plots |
-| `magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
+| `code/external_libraries_requirements.txt` | Required Python packages |
+| `code/magnetic_data_reader.py` | One magnetic-field reader for one-minute and four-samples-per-cycle FIELDS data |
+| `code/magnetic_data_visualization.py` | Daily magnetic-field overview plots |
+| `code/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `results/` | Small set of retained detector catalogs and final validation summary |
 | `figures/` | Illustrations and figures used in the research document |
 
@@ -26,12 +27,12 @@ pre-cleanup snapshot remains on
 
 ## Setup
 
-Python 3.10+ recommended.
+Run the following commands from the repository root. Python 3.10+ recommended.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r external_libraries_requirements.txt
+python -m pip install -r code/external_libraries_requirements.txt
 ```
 
 Raw NASA CDF data belong in the git-ignored `data/` cache. The loaders use
@@ -41,9 +42,9 @@ can be large.
 ## Basic magnetic-field plots
 
 ```bash
-python magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 1min
-python magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 4cyc
-python magnetic_data_visualization.py --start 2018-11-06 --days 1
+python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 1min
+python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 4cyc
+python code/magnetic_data_visualization.py --start 2018-11-06 --days 1
 ```
 
 Both FIELDS products are read through the same module: `get_day(day, resolution="1min")`
@@ -55,12 +56,12 @@ data from one-minute averages.
 ## Candidate switchback detector
 
 ```bash
-python magnetic_data_analysis.py --self-test
-python magnetic_data_analysis.py --top 1 --reference local --no-plots
+python code/magnetic_data_analysis.py --self-test
+python code/magnetic_data_analysis.py --top 1 --reference local --no-plots
 ```
 
 The 20 frozen exploratory observation windows are built into
-`magnetic_data_analysis.py` (no separate `config/` folder). Use `--top 0` to
+`code/magnetic_data_analysis.py` (no separate `config/` folder). Use `--top 0` to
 analyze all of them, or `--top 1` for a quick functional run. To analyze your
 own windows, pass `--windows-csv path/to/your.csv` with `start,end,category`
 columns. A previous local `data/survey_selected.csv` is **not automatically
@@ -81,7 +82,7 @@ This is **not** a reproduction of the published SPAN-i-based method.
 - Physically confirmed switchbacks and robust event boundaries: **not yet**.
 - Energetic-particle correlation analysis with IS☉IS: **future work**.
 
-**Reproducibility notice:** The high-resolution loading function has been merged into `magnetic_data_reader.py`.
+**Reproducibility notice:** The high-resolution loading function has been merged into `code/magnetic_data_reader.py`.
 The original local `switchback_survey.py` was not tracked in Git; thus
 reproduction of the original event catalogs still needs checking against
 actual NASA CDF data on the research Mac. The refactor was tested with

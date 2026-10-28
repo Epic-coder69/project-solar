@@ -116,37 +116,73 @@ confirmed switchbacks, and the existing event-window merging can still
 combine separate magnetic rotations. There is no fixed duration limit,
 but missing NASA data, download sizes, disk space and computing time apply.
 
-**Current division of work:** the reader can now pre-screen full cadence
-for arbitrary ranges. The separate magnetic analysis still uses the
-older 4-samples-per-cycle measurements; full-cadence detailed physics
-analysis and synchronized visualization have not been implemented yet.
-The reader's read_full_interval(start,end) exposes the original measured
-samples for that later stage.
+**Current division of work:** the reader screens original full-cadence
+measurements for candidate observation windows. The analysis script now
+consumes those candidate CSVs, uses one-second vectors derived from the
+full-cadence source to delineate individual magnetic rotations, and revisits
+the native-rate observations to calculate physical magnetic metrics. These
+events are **not confirmed physical switchbacks**. Independent plasma
+verification and synchronized particle visualization remain future work.
 
-## Candidate switchback detector
+## Magnetic-event analysis
+
+**Default: analyze the original full-cadence source using the reader's CSV.**
 
 ```bash
+# Synthetic tests for both full-cadence and legacy logic (no downloads)
 python code/magnetic_data_analysis.py --self-test
-python code/magnetic_data_analysis.py --top 1 --reference local --no-plots
+
+# First try one screening window, without plotting
+python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --top 1 --no-plots
+
+# Analyze all 20 Nov 2 investigation windows, with figures
+python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv
 ```
 
-The 20 frozen exploratory observation windows are built into
-`code/magnetic_data_analysis.py` (no separate `config/` folder). Use `--top 0` to
-analyze all of them, or `--top 1` for a quick functional run. To analyze your
-own windows, pass `--windows-csv path/to/your.csv` with `start,end,category`
-columns. A previous local `data/survey_selected.csv` is **not automatically
-loaded**; specify it explicitly with `--windows-csv data/survey_selected.csv`
-if you want the original local selection. Results are generated under `data/`
-and intentionally are **not automatically committed**.
+The full pipeline uses the reader's `start,end,category` columns, plus
+`core_start,core_end` when present. The latter identify which detected
+sub-events belong to the screening window, **not** the event boundaries.
+The analysis independently finds 45°/30° magnetic rotations lasting at
+least 10 seconds, flags incomplete edges, and removes duplicate detections.
+It creates:
 
-An **experimental** Parker-spiral comparison is available via
-`--reference parker-spc` (requires SWEAP SPC proton velocity/position files).
-This is **not** a reproduction of the published SPAN-i-based method.
+- `data/full_analysis_november_02_candidates_events.csv` — per-event time boundaries, angle
+  from the 1-second derived waveform, native-cadence peak deflection,
+  radial reversal, native sample counts, and deviations of `|B|` from
+  the local scalar baseline.
+- `data/full_analysis_november_02_candidates_audit.csv` — how many events each screening window
+  yielded, valid-data/reference coverage, missing background days and errors.
+- `figures/full_analysis_*.png` — **1-second display plots** with magnetic
+  components, scalar magnitude, local reference and threshold crossings.
+
+These CSVs are updated **after every processed candidate window**, not
+only at the end.
+The filenames derive from the input CSV and optional `--top` limit, preventing
+scans of different days from overwriting each other's results. The native-cadence magnitude-deviation median uses a
+streaming histogram (approximately 0.1 percentage-point precision) to
+avoid storing millions of samples in memory. Event timestamps currently
+have 1-second precision; the higher-cadence pass measures properties but
+does not independently refine sub-second boundaries. Cached NASA CDFs
+are reused, but processing large intervals can still be substantial.
+
+**Legacy benchmark:** the 20 frozen survey windows and older 1-minute /
+4-samples-per-cycle analysis remain available explicitly:
+
+```bash
+python code/magnetic_data_analysis.py --mode legacy --top 1 --reference local --no-plots
+python code/magnetic_data_analysis.py --mode legacy --windows-csv data/survey_selected.csv --top 0
+```
+
+The experimental `--reference parker-spc` option is **legacy only**.
+It uses SWEAP SPC and is not identical to the published SPAN-i-based method.
+Legacy results retain their previous `corrected_*` paths.
 
 ### Scientific status
 
 - Reading and preprocessing FIELDS magnetic-field vectors: **working**.
 - Automatic rotation/switchback *candidate* extraction: **working**.
+- New full-cadence analysis with magnetic diagnostics: **implemented; synthetic
+  self-test included, requires real-data validation on the research Mac**.
 - Independent validation: **completed exploratory comparison, inconclusive
   detector ranking**; see [holdout findings](results/holdout_findings.md).
 - Physically confirmed switchbacks and robust event boundaries: **not yet**.

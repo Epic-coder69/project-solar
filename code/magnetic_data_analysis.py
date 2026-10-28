@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project Solar: corrected FIELDS switchback-candidate benchmark.
+"""Project Solar: full-cadence magnetic-event analysis plus legacy benchmark.
 
 Laker et al. (2022) event thresholds (45/30 deg, 10 s, merge <20 s).
 References:
@@ -13,7 +13,10 @@ SWEAP SPC Level 3: PSP_SWP_SPC_L3I, vp1_fit_RTN, sc_pos_HCI, general_flag.
                    This is not a reproduction of the published SPAN-i + SPC
                    fallback and filtered velocity method.
 
-Requires magnetic_data_reader.py (both one-minute and four-samples-per-cycle readers).
+Default --mode full consumes the reader's --windows-csv output and analyzes
+original full-cadence FIELDS data. Detection boundaries and plot traces are
+at one-second resolution; native samples are revisited for physical metrics.
+--mode legacy preserves the older 1min/4cyc/SPC benchmark workflow.
 Never labels any magnetic deflection as a confirmed physical switchback.
 """
 import argparse
@@ -30,7 +33,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from magnetic_data_reader import get_day, read_high
+from magnetic_data_reader import get_day, read_high, full_cadence_seconds, read_full_interval
 
 DATA = Path('data')
 FIG = Path('figures')
@@ -407,19 +410,375 @@ def self_test():
     print('PASS: thresholds, duration, NaN gaps, boundary flags, and dedup')
 
 
+
+# ---------------------------------------------------------------------------
+# Full-cadence candidate analysis (new path). The legacy 4cyc benchmark above
+# remains available with --mode legacy for reproducibility.
+# ---------------------------------------------------------------------------
+
+FULL_EVENT_COLUMNS = [
+    'seed_utc', 'seed_category', 'event_start_utc', 'event_end_utc',
+    'observed_span_seconds', 'duration_seconds', 'left_censored',
+    'right_censored', 'maximum_deflection_deg',
+    'native_peak_deflection_deg', 'native_valid_samples',
+    'native_total_samples', 'median_abs_Bmag_deviation_pct_approx',
+    'max_abs_Bmag_deviation_pct', 'radial_reversal',
+    'reference', 'status', 'duplicate_source_count', 'source_seed_utcs'
+]
+
+
+@lru_cache(maxsize=4)
+def _full_seconds_for_day(day):
+    """Screening-rate summary derived ONLY from original full-cadence CDFs.
+
+    Caching one-second daily vectors avoids reading a whole day of NASA data
+    again for every candidate in the same daily scan.
+    """
+    return full_cadence_seconds(day)
+
+
+def _full_window(seed):
+    """One candidate's data, with 100-minute background on both sides.
+
+    The candidate's start/end are observation context, not event boundaries.
+    Missing-day data are not silently interpolated.
+    """
+    left, right = pd.Timestamp(seed['start']), pd.Timestamp(seed['end'])
+    if left.tzinfo is not None:
+        left = left.tz_convert('UTC').tz_localize(None)
+    if right.tzinfo is not None:
+        right = right.tz_convert('UTC').tz_localize(None)
+    if right <= left:
+        raise ValueError('Candidate end must follow start')
+    halo = pd.Timedelta(minutes=100)
+    background_left, background_right = left-halo, right+halo
+    pieces = []
+    unavailable = []
+    for day in pd.date_range(background_left.normalize(),
+                             background_right.normalize(), freq='D'):
+        try:
+            piece = _full_seconds_for_day(day.date())
+        except (FileNotFoundError, RuntimeError) as exc:
+            unavailable.append(f'{day.date()}: {exc}')
+            continue
+        pieces.append(piece.loc[(piece.index >= background_left) &
+                                (piece.index <= background_right)])
+    if not pieces:
+        raise RuntimeError('No full-cadence FIELDS measurements: ' +
+                           '; '.join(unavailable))
+    seconds = pd.concat(pieces).sort_index()
+    seconds = seconds[~seconds.index.duplicated(keep='last')]
+    # Reinsert missing one-second bins so find_events cannot bridge a data gap.
+    seconds = seconds.resample('1s').median()
+    sample = seconds.loc[(seconds.index >= left) &
+                         (seconds.index <= right)].copy()
+    if sample.empty or sample[['BR', 'BT', 'BN']].notna().all(axis=1).sum() < 10:
+        raise RuntimeError('Too few valid one-second magnetic vectors in candidate')
+
+    minute = seconds[['BR', 'BT', 'BN']].resample('1min').median()
+    direction = minute.rolling('181min', center=True, min_periods=30).median()
+    # Scalar baseline is independent of smoothed vector length.
+    scalar = seconds['Bmag'].resample('1min').median().rolling(
+        '181min', center=True, min_periods=30
+    ).median()
+    reference = direction.reindex(
+        sample.index, method='nearest', tolerance=pd.Timedelta(seconds=35))
+    magnitude = scalar.reindex(
+        sample.index, method='nearest', tolerance=pd.Timedelta(seconds=35))
+    sample['Bmag'] = np.sqrt(
+        (sample[['BR', 'BT', 'BN']]**2).sum(axis=1, min_count=3))
+    return sample, reference, magnitude, left, right, unavailable
+
+
+def _native_event_statistics(left, right, reference, mag_reference,
+                             native_stream=None):
+    """Revisit ORIGINAL magnetic records; never keep a full event in RAM.
+
+    Event boundaries are 1-second-resolution threshold crossings. Peak angle,
+    radial reversal and magnitude deviations use native-cadence observations.
+    The median deviation is quantized to 0.1 percentage points (streaming
+    histogram), hence the _approx name; its upper bin is >=500%.
+    """
+    if native_stream is None:
+        native_stream = read_full_interval(left, right + pd.Timedelta(seconds=1))
+    bins = np.zeros(5001, dtype=np.int64)
+    total, matched, magnitude_count = 0, 0, 0
+    peak, max_delta, reversal = np.nan, np.nan, False
+    stop = right + pd.Timedelta(seconds=1)
+    for chunk in native_stream:
+        chunk = chunk.loc[(chunk.index >= left) & (chunk.index < stop)]
+        if chunk.empty:
+            continue
+        total += len(chunk)
+        seconds = chunk.index.floor('s')
+        bg = reference.reindex(seconds)[['BR','BT','BN']].to_numpy(dtype=float)
+        mag_bg = mag_reference.reindex(seconds).to_numpy(dtype=float)
+        field = chunk[['BR','BT','BN']].to_numpy(dtype=float)
+        denom = np.linalg.norm(bg, axis=1) * np.linalg.norm(field, axis=1)
+        valid = (np.isfinite(bg).all(axis=1) &
+                 np.isfinite(field).all(axis=1) &
+                 np.isfinite(denom) & (denom > 1e-8))
+        matched += int(valid.sum())
+        if valid.any():
+            cos = np.sum(field[valid]*bg[valid], axis=1)/denom[valid]
+            angles = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+            value = float(angles.max())
+            peak = value if not np.isfinite(peak) else max(peak, value)
+            reversal |= bool(np.any(field[valid, 0]*bg[valid, 0] < 0))
+        scalar = chunk['Bmag'].to_numpy(dtype=float)
+        good = (valid & np.isfinite(scalar) & np.isfinite(mag_bg) &
+                (mag_bg > 0.01))
+        if good.any():
+            deviation = np.abs(scalar[good]/mag_bg[good]-1)*100
+            magnitude_count += len(deviation)
+            top = float(deviation.max())
+            max_delta = top if not np.isfinite(max_delta) else max(max_delta, top)
+            positions = np.minimum((deviation*10).astype(int), 5000)
+            bins += np.bincount(positions, minlength=5001)
+    if magnitude_count:
+        median_bin = int(np.searchsorted(np.cumsum(bins),
+                                         (magnitude_count+1)//2))
+        median_delta = (median_bin + 0.5)/10
+    else:
+        median_delta = np.nan
+    return dict(
+        native_total_samples=total,
+        native_valid_samples=matched,
+        native_peak_deflection_deg=(round(peak, 1)
+                                    if np.isfinite(peak) else np.nan),
+        median_abs_Bmag_deviation_pct_approx=(
+            round(median_delta, 2) if np.isfinite(median_delta) else np.nan),
+        max_abs_Bmag_deviation_pct=(
+            round(max_delta, 2) if np.isfinite(max_delta) else np.nan),
+        radial_reversal=bool(reversal)
+    )
+
+
+def _seed_core(seed, left, right):
+    """Core limits choose RELEVANT detections; they never define an event."""
+    a = pd.Timestamp(seed.get('core_start', left))
+    b = pd.Timestamp(seed.get('core_end', right))
+    if a.tzinfo is not None:
+        a = a.tz_convert('UTC').tz_localize(None)
+    if b.tzinfo is not None:
+        b = b.tz_convert('UTC').tz_localize(None)
+    if b < a:
+        raise ValueError('core_end precedes core_start')
+    return a, b
+
+
+def _plot_full_candidate(seed, number, sample, reference, magnitude,
+                         angle, events):
+    FIG.mkdir(parents=True, exist_ok=True)
+    path = FIG / f'full_analysis_{pd.Timestamp(seed["start"]):%Y%m%d_%H%M%S}_{number}.png'
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True,
+                             constrained_layout=True)
+    for name in ('BR', 'BT', 'BN'):
+        axes[0].plot(sample.index, sample[name], lw=.7, label=name)
+    axes[0].set_ylabel('RTN magnetic field (nT)')
+    axes[0].legend(ncol=3)
+    axes[1].plot(sample.index, sample['Bmag'], lw=.8, label='Measured |B| (1s)')
+    axes[1].plot(magnitude.index, magnitude, lw=.8, ls='--',
+                 label='Local scalar reference')
+    axes[1].set_ylabel('|B| (nT)')
+    axes[1].legend()
+    axes[2].plot(angle.index, angle, lw=.8)
+    axes[2].axhline(EDGE_DEG, color='grey', ls='--', label='30° boundary')
+    axes[2].axhline(TRIGGER_DEG, color='red', ls='--', label='45° trigger')
+    axes[2].set_ylabel('Deflection (degrees)')
+    axes[2].set_xlabel('UTC')
+    axes[2].legend()
+    for e in events:
+        for ax in axes:
+            ax.axvspan(pd.Timestamp(e['event_start_utc']),
+                       pd.Timestamp(e['event_end_utc']),
+                       color='orange', alpha=.15)
+    for ax in axes:
+        ax.grid(alpha=.2)
+    fig.suptitle('FIELDS full-cadence source, one-second event boundaries '
+                 '(unvalidated)')
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return str(path)
+
+
+def evaluate_full_seed(seed, number, plot=True):
+    """Analyze candidate with local reference and native-cadence measurements."""
+    sample, reference, mag_ref, left, right, unavailable = _full_window(seed)
+    angle = deflection(sample, reference)
+    core_left, core_right = _seed_core(seed, left, right)
+    events = []
+    for i, j, duration, angle_peak, clip_left, clip_right in find_events(angle):
+        event_left, event_right = sample.index[i], sample.index[j]
+        if event_right < core_left or event_left > core_right:
+            continue
+        native = _native_event_statistics(
+            event_left, event_right, reference, mag_ref)
+        censored = bool(clip_left or clip_right)
+        events.append(dict(
+            seed_utc=left.isoformat(),
+            seed_category=str(seed.get('category', 'unknown')),
+            event_start_utc=event_left.isoformat(),
+            event_end_utc=event_right.isoformat(),
+            observed_span_seconds=duration,
+            duration_seconds=(np.nan if censored else duration),
+            left_censored=bool(clip_left),
+            right_censored=bool(clip_right),
+            maximum_deflection_deg=round(angle_peak, 1),
+            **native, reference='full_local_181min',
+            status='unvalidated_magnetic_rotation'
+        ))
+    figure = (_plot_full_candidate(seed, number, sample, reference, mag_ref,
+                                   angle, events) if plot else '')
+    return events, figure, dict(
+        valid_seconds=int(sample[['BR','BT','BN']].notna().all(axis=1).sum()),
+        total_seconds=len(sample),
+        matched_reference_seconds=int(angle.notna().sum()),
+        missing_background_days='; '.join(unavailable)
+    )
+
+
+def full_self_test():
+    """No NASA download: test native vector metrics and core filtering."""
+    idx = pd.date_range('2018-11-02 13:00:00', periods=180, freq='s')
+    measured = pd.DataFrame({
+        'BR': np.where((np.arange(180)>=65)&(np.arange(180)<90), -80., 80.),
+        'BT': 0., 'BN': 0.
+    }, index=idx)
+    measured['Bmag'] = 80.
+    ref = pd.DataFrame({'BR':80., 'BT':0., 'BN':0.}, index=idx)
+    mag = pd.Series(80., index=idx)
+    ang = deflection(measured, ref)
+    found = find_events(ang)
+    assert len(found) == 1 and found[0][2] == 25
+    raw_idx = pd.date_range(idx[65], periods=75, freq='333ms')
+    original = pd.DataFrame({'BR':-80.,'BT':0.,'BN':0.,'Bmag':80.},
+                            index=raw_idx)
+    stats = _native_event_statistics(idx[65], idx[89], ref, mag,
+                                     native_stream=iter([original]))
+    assert stats['native_valid_samples'] == 75
+    assert stats['native_peak_deflection_deg'] == 180.0
+    assert stats['radial_reversal'] is True
+    assert stats['median_abs_Bmag_deviation_pct_approx'] < .1
+    a, b = _seed_core({'core_start':idx[65], 'core_end':idx[89]},
+                      idx[0], idx[-1])
+    assert (a, b) == (idx[65], idx[89])
+    # Exercise the new candidate -> 1-second background path without NASA.
+    from unittest.mock import patch
+    synthetic_idx = pd.date_range('2018-11-02 10:00:00',
+                                  periods=21600, freq='s')
+    syn = pd.DataFrame({'BR':80.,'BT':0.,'BN':0.,'Bmag':80.},
+                       index=synthetic_idx)
+    syn.loc[idx[65]:idx[89], 'BR'] = -80.
+    with patch(__name__ + '._full_seconds_for_day', return_value=syn):
+        sliced, baseline, scalar, *_ = _full_window({
+            'start':'2018-11-02 13:00:00',
+            'end':'2018-11-02 13:03:00',
+            'category':'screened_full',
+            'core_start':idx[65], 'core_end':idx[89]
+        })
+    assert len(find_events(deflection(sliced, baseline))) == 1
+    assert float(scalar.loc[idx[65]]) == 80.
+    print('PASS: native-cadence physical metrics, 1s event segmentation, '
+          'and candidate-core handling')
+
+
+def run_full_analysis(args, parser):
+    """New CSV-to-physical-analysis pipeline; never overwrites legacy outputs."""
+    if args.windows_csv is None:
+        parser.error('Full-cadence mode needs --windows-csv from the reader')
+    if args.reference != 'local':
+        parser.error('Full-cadence mode supports --reference local only; '
+                     'use --mode legacy for the older Parker-SPC benchmark')
+    if not args.windows_csv.is_file():
+        parser.error(f'Candidate CSV not found: {args.windows_csv}')
+    seeds = pd.read_csv(args.windows_csv)
+    needed = {'start', 'end', 'category'}
+    if not needed.issubset(seeds.columns):
+        parser.error('CSV requires columns start,end,category')
+    if seeds.empty:
+        print('No candidate rows in the CSV; no physical events to analyze.')
+        return
+    seeds = seeds.sort_values('start')
+    if args.top:
+        seeds = seeds.head(args.top)
+    events, audit = [], []
+    DATA.mkdir(parents=True, exist_ok=True)
+    # Output names follow the input catalog, so two different observation
+    # days do not overwrite each other's research results.
+    catalog_name = re.sub(r'[^A-Za-z0-9_-]+', '_', args.windows_csv.stem)
+    suffix = (f'_top{args.top}' if args.top else '')
+    prefix = f'full_analysis_{catalog_name}{suffix}'
+    output = DATA / f'{prefix}_events.csv'
+    audit_output = DATA / f'{prefix}_audit.csv'
+
+    def save_progress():
+        # Tiny catalogs are atomically replaced after each candidate; safe to
+        # open from another terminal while a long analysis continues.
+        unique_now = deduplicate(events)
+        for path, frame in (
+            (output, pd.DataFrame(unique_now, columns=FULL_EVENT_COLUMNS)),
+            (audit_output, pd.DataFrame(audit)),
+        ):
+            temporary = path.with_name(path.name + '.tmp')
+            try:
+                frame.to_csv(temporary, index=False)
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    for i, seed in enumerate(seeds.to_dict('records'), start=1):
+        try:
+            found, figure, diagnostics = evaluate_full_seed(
+                seed, i, plot=not args.no_plots)
+            events.extend(found)
+            audit.append(dict(seed_utc=seed['start'],
+                              seed_category=seed['category'],
+                              detected_events=len(found),
+                              figure=figure, error='', **diagnostics))
+            print(f'[FULL {i}/{len(seeds)}] {seed["start"]}: '
+                  f'{len(found)} candidate events', flush=True)
+        except Exception as exc:
+            print(f'[FULL ERROR] {seed["start"]}: {exc}', flush=True)
+            audit.append(dict(seed_utc=seed['start'],
+                              seed_category=seed['category'],
+                              detected_events=0, figure='', error=str(exc)))
+        save_progress()
+        print(f'[SAVED] Analyzed {i}/{len(seeds)} windows; '
+              f'current catalog: {output}', flush=True)
+    # Avoid double-counting the same event in overlapping reader windows.
+    unique = deduplicate(events)
+    good = sum(not r['error'] for r in audit)
+    print(f'COMPLETE: {len(seeds)} screening windows; '
+          f'{len(events)} candidate event detections; '
+          f'{len(unique)} after dedup; {good}/{len(seeds)} windows processed')
+    print(f'Saved {output} and {audit_output}')
+    if not good:
+        raise SystemExit('No windows analyzed successfully: see audit CSV')
+
+
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--top',type=int,default=8,help='Seed windows to analyze; 0=all')
+    p.add_argument('--top',type=int,default=None,help='Windows to analyze; 0=all (full mode default: all; legacy default: 8)')
+    p.add_argument('--mode',choices=('full','legacy'),default='full',
+                   help='Full-cadence candidate analysis (default) or original 4cyc benchmark')
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
     p.add_argument('--self-test',action='store_true')
     p.add_argument('--no-plots',action='store_true')
     p.add_argument('--windows-csv',type=Path,default=None,
-                   help='Optional alternate start,end,category CSV; otherwise use built-in 20 windows')
+                   help='Reader candidate CSV in full mode; legacy mode defaults to built-in 20 windows')
     a=p.parse_args()
     if a.self_test:
-        self_test();return
-    if a.top<0:
+        self_test()
+        full_self_test()
+        return
+    if a.top is not None and a.top < 0:
         p.error('--top must be nonnegative')
+    if a.top is None:
+        a.top = 0 if a.mode == 'full' else 8
+    if a.mode == 'full':
+        run_full_analysis(a, p)
+        return
     # Default candidates are stored here; a separate file is optional.
     if a.windows_csv is None:
         seeds=default_windows()

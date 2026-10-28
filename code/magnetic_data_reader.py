@@ -6,7 +6,7 @@ One interface for PSP/FIELDS Level-2 RTN products:
   scan_time_range(start, end)        -- arbitrary interval, full-cadence pre-screen
   read_full_interval(start, end)     -- original full-cadence samples
 
-Both return a UTC-indexed DataFrame with BR, BT, BN and Bmag (nT).
+The direct readers return UTC-indexed BR, BT, BN and Bmag (nT).
 The products are not interchangeable: the low-cadence product is not
 interpolated into high-cadence measurements. The reader only performs a
 permissive pre-screen. Scientific characterization belongs to
@@ -275,6 +275,23 @@ def _full_day_files(day, start=None, end=None):
     return paths
 
 
+def _lower_record_bound(last_record, timestamp_at, target):
+    """First record at/after target; efficient for short selections in huge CDFs.
+
+    NASA documents MAG epoch timestamps as monotonically increasing.
+    Only O(log N) timestamp records need reading, instead of decoding all
+    magnetic vectors in a six-hour file to inspect a few requested minutes.
+    """
+    low, high = 0, last_record + 1
+    while low < high:
+        mid = (low + high) // 2
+        if timestamp_at(mid) < target:
+            low = mid + 1
+        else:
+            high = mid
+    return low
+
+
 def iter_full_cadence(day, records_per_chunk=250_000, start=None, end=None):
     """Yield chronological, quality-screened full-cadence magnetic DataFrames.
 
@@ -294,8 +311,31 @@ def iter_full_cadence(day, records_per_chunk=250_000, start=None, end=None):
             raise ValueError(f"Missing full-cadence vector/epoch in {path.name}")
         vector = names[FULL_VECTOR.lower()]
         epoch = names[FULL_EPOCH.lower()]
-        last = cdf.varinq(vector).Last_Rec
+        last = int(cdf.varinq(vector).Last_Rec)
+        if last < 0:
+            continue
         fill = cdf.varattsget(vector).get("FILLVAL")
+
+        # Source filenames identify 6-hour UTC intervals. Avoid reading
+        # vectors before/after a short requested interval. For scans that
+        # cover the whole file we simply stream all records.
+        filename_match = FULL_NAME.fullmatch(path.name)
+        if filename_match is None:
+            raise ValueError(f"Unrecognized full-cadence filename: {path.name}")
+        segment_start = pd.to_datetime(filename_match.group(1), format="%Y%m%d%H")
+        segment_end = segment_start + pd.Timedelta(hours=6)
+
+        def timestamp_at(record):
+            one = cdf.varget(epoch, startrec=record, endrec=record)
+            converted = cdflib.cdfepoch.to_datetime(one)
+            return pd.Timestamp(np.atleast_1d(converted)[0])
+
+        first_record = (0 if left is None or left <= segment_start else
+                        _lower_record_bound(last, timestamp_at, left))
+        stop_record = (last + 1 if right is None or right >= segment_end else
+                       _lower_record_bound(last, timestamp_at, right))
+        if first_record >= stop_record:
+            continue
 
         flags = None
         if {"psp_fld_l2_quality_flags", "epoch_quality_flags"}.issubset(names):
@@ -310,8 +350,8 @@ def iter_full_cadence(day, records_per_chunk=250_000, start=None, end=None):
             flags = pd.Series(flag_values, index=flag_dates).sort_index()
             flags = flags[~flags.index.duplicated(keep="last")]
 
-        for first in range(0, last + 1, records_per_chunk):
-            final = min(first + records_per_chunk - 1, last)
+        for first in range(first_record, stop_record, records_per_chunk):
+            final = min(first + records_per_chunk - 1, stop_record - 1)
             raw = np.asarray(
                 cdf.varget(vector, startrec=first, endrec=final), dtype=float
             )
@@ -383,7 +423,9 @@ def pre_screen_magnetic_rotations(
 
     Local direction uses a centered 181-minute median of *minute summaries
     derived from full-cadence samples*. Candidate windows retain surrounding
-    context for later detailed physical interpretation.
+    context for later detailed physical interpretation. The 1-second medians
+    can miss sub-second changes; this is deliberately an exploratory screen,
+    not an exhaustive scientific switchback detector.
     """
     empty = ["start", "end", "category", "peak_angle_deg",
              "core_start", "core_end", "screening_method"]
@@ -391,6 +433,10 @@ def pre_screen_magnetic_rotations(
         return pd.DataFrame(columns=empty)
     b = seconds[["BR", "BT", "BN"]].sort_index()
     b = b[~b.index.duplicated(keep="last")]
+    # A missing telemetry interval must be represented by NaNs. Without
+    # explicit one-second bins, two widely separated valid samples could
+    # masquerade as a continuous event and cross a real data gap.
+    b = b.resample("1s").median()
     if len(b) < 120:
         return pd.DataFrame(columns=empty)
     # Avoid reference collapse due to transient vector reversals. No
@@ -539,17 +585,20 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
 
     Output windows are candidate *investigation* intervals, not physically
     validated switchback boundaries. Missing segments and sparse coverage are
-    reported; dates with no usable samples raise errors.
+    reported; scans continue across unavailable days and fail if no usable
+    magnetic samples exist anywhere in the requested interval.
     """
     left, right = _as_utc_naive(start), _as_utc_naive(end)
     if right <= left:
         raise ValueError("End time must be later than start time")
     halo = pd.Timedelta(minutes=100)
     rows = []
+    total_valid_seconds = 0
     last_day = (right - pd.Timedelta(nanoseconds=1)).normalize()
     for day in pd.date_range(left.normalize(), last_day, freq="D"):
         core_left = max(left, day)
         core_right = min(right, day + pd.Timedelta(days=1))
+        expected_seconds = max(1, int(np.ceil((core_right - core_left).total_seconds())))
         around_left, around_right = core_left - halo, core_right + halo
         parts = []
         halo_last = (around_right - pd.Timedelta(nanoseconds=1)).normalize()
@@ -565,19 +614,33 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                     start=piece_start, end=piece_end
                 )
             except FileNotFoundError:
-                # External context at a NASA coverage edge may be absent.
-                # The requested core itself must have data.
-                if piece_end <= core_left or piece_start >= core_right:
-                    continue
-                raise
+                # Coverage can be intermittent. Record the gap, continue to
+                # the next available segment, and NEVER label a gap quiet.
+                print(f"[MISSING COVERAGE] {piece_start} to {piece_end}: "
+                      "NASA full-cadence file not available", flush=True)
+                continue
+            except RuntimeError as exc:
+                if "No full-cadence FIELDS measurements" not in str(exc):
+                    raise
+                print(f"[MISSING COVERAGE] {piece_start} to {piece_end}: "
+                      "no measurements in available files", flush=True)
+                continue
             parts.append(part)
         if not parts:
-            raise RuntimeError(f"No full-cadence measurements for {core_left} to {core_right}")
+            print(f"[COVERAGE WARNING] {core_left} to {core_right}: no valid "
+                  "observations (not a quiet interval)", flush=True)
+            if on_day is not None:
+                on_day(day.date(), 0, 0, expected_seconds)
+            continue
         series = pd.concat(parts).sort_index()
         series = series[~series.index.duplicated(keep="last")]
         core = series.loc[(series.index >= core_left) & (series.index < core_right)]
-        if core.empty or not core[["BR","BT","BN"]].notna().any(axis=1).any():
-            raise RuntimeError(f"No usable magnetic measurements in {core_left} to {core_right}")
+        if core.empty or not core[["BR","BT","BN"]].notna().all(axis=1).any():
+            print(f"[COVERAGE WARNING] {core_left} to {core_right}: no valid "
+                  "magnetic vectors (not a quiet interval)", flush=True)
+            if on_day is not None:
+                on_day(day.date(), 0, 0, expected_seconds)
+            continue
         candidate = pre_screen_magnetic_rotations(series)
         if not candidate.empty:
             # Prevent duplication from the 100-minute context on adjacent days.
@@ -588,7 +651,7 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
             for row in candidate.to_dict("records"):
                 rows.append(row)
         observed = int(core[["BR","BT","BN"]].notna().all(axis=1).sum())
-        expected_seconds = max(1, int(np.ceil((core_right - core_left).total_seconds())))
+        total_valid_seconds += observed
         coverage = min(1.0, observed / expected_seconds)
         if coverage < 0.90:
             print(f"[COVERAGE WARNING] {day.date()}: {coverage:.1%} of requested "
@@ -596,6 +659,9 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                   "must not be interpreted as an absence of switchbacks")
         if on_day is not None:
             on_day(day.date(), len(candidate), observed, expected_seconds)
+    if total_valid_seconds == 0:
+        raise RuntimeError("No valid full-cadence observations in the requested "
+                           "interval. No switchback screening catalog produced.")
     result = _merge_screened_windows(rows)
     if not result.empty:
         result = result.sort_values("start").reset_index(drop=True)
@@ -622,9 +688,26 @@ def _screen_self_test():
     assert _segment_hours("2018-11-06",
                           "2018-11-06T05:55:00",
                           "2018-11-06T06:05:00") == (0, 6)
+    t0 = pd.Timestamp("2018-11-06T00:00:00")
+    fake_epoch = [t0 + pd.Timedelta(milliseconds=100*i) for i in range(100)]
+    lookup = lambda i: fake_epoch[i]
+    assert _lower_record_bound(99, lookup, t0) == 0
+    assert _lower_record_bound(99, lookup, t0 + pd.Timedelta(milliseconds=250)) == 3
+    assert _lower_record_bound(99, lookup, t0 + pd.Timedelta(seconds=10)) == 100
+    # Sparse observations should not bridge missing-data intervals.
+    gap_index = pd.date_range("2018-11-06", periods=10800, freq="s")
+    sparse = pd.DataFrame(
+        {"BR": 80., "BT": 0., "BN": 0.}, index=gap_index
+    )
+    sparse.loc["2018-11-06 01:30:00":"2018-11-06 01:30:09", "BR"] = -80.
+    sparse.loc["2018-11-06 01:32:00":"2018-11-06 01:32:09", "BR"] = -80.
+    sparse = sparse.drop(index=pd.date_range(
+        "2018-11-06 01:30:10", "2018-11-06 01:31:59", freq="s"))
+    observed = pre_screen_magnetic_rotations(sparse, context_minutes=0)
+    assert len(observed) == 2, f"Telemetric data gaps were bridged: {observed}"
     assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "10m") == pd.Timestamp("2018-11-06T12:10:00")
     assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "2mo") == pd.Timestamp("2019-01-06T12:00:00")
-    print("PASS: synthetic pre-screen, 6-hour file targeting, and time-range parsing")
+    print("PASS: quiet/rotation screening, gap handling, record search, and range parsing")
 
 
 if __name__ == "__main__":

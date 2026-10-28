@@ -121,6 +121,67 @@ the native-rate observations to calculate physical magnetic metrics. These
 events are **not confirmed physical switchbacks**. Independent plasma
 verification and synchronized particle visualization remain future work.
 
+
+## Long scans with event archiving and automatic raw-cache cleanup
+
+**Use the rolling pipeline instead of a 2-month reader-first command when
+disk space matters.** It processes one UTC day at a time:
+
+1. Reader searches one day and saves its candidate CSV.
+2. Analysis characterizes all candidates and saves events/registry/audit.
+3. Analysis archives **every 1-second candidate-window waveform**, including
+   the observed RTN components, 181-minute background, magnitude and angle.
+4. The pipeline archives **every detected event** at the original native sample
+   cadence, including five minutes before/after each event, as gzip CSV.
+   No 90-degree or radial-reversal filter is used for archival.
+5. Only after all outputs and archives are checked does the optional cleanup
+   remove older full-cadence CDF files from **data/fields_full/**. It retains
+   the preceding day's files while processing adjacent days and never deletes
+   unrelated product caches or files outside the requested observation period.
+   Any day with less than 90% valid one-second coverage is kept intact.
+
+First run its safe, local synthetic tests:
+
+\`\`\`bash
+python code/magnetic_data_pipeline.py --self-test
+python code/magnetic_data_analysis.py --self-test
+\`\`\`
+
+Two-month unattended example (November 1, 2018 through January 1, 2019 UTC;
+run from the repository root, on a Mac connected to power with lid open):
+
+\`\`\`bash
+mkdir -p logs
+nohup caffeinate -is ./.venv/bin/python code/magnetic_data_pipeline.py \
+  --start 2018-11-01 --duration 2mo --cleanup-raw \
+  > logs/rolling_nov_dec_2018.log 2>&1 < /dev/null &
+tail -f logs/rolling_nov_dec_2018.log
+\`\`\`
+
+To resume after interruption, rerun the same command with \`--resume\`.
+To preview the cleanup without actually removing any CDFs, add
+\`--dry-run-cleanup\` (requires \`--cleanup-raw\`). Leave out
+\`--cleanup-raw\` to keep the original CDFs. Add \`--plots\` only if PNG
+figures are needed for every window; PNGs are off by default to save space.
+
+Outputs are saved by day under \`data/rolling_<start>_<end>/\`, including
+daily checkpoints, event gzip files, one-second background archives and an
+event archive index. At successful completion the folder also contains
+\`all_events.csv\`, \`all_registry.csv\`, \`all_audit.csv\` and
+\`all_event_archives.csv\`.
+
+**Scientific and data-retention caveats:** Archived event samples are
+quality-filtered RTN magnetic vectors, *not* a lossless original NASA CDF.
+They do not preserve the full instrument metadata or raw quality-flag history.
+Quiet full-cadence intervals not inside event archives are deliberately
+discarded from the local cache when cleanup is enabled; original CDFs remain
+available for later download from NASA. A five-minute context is retained
+around each magnetic event, plus the 1-second local-background traces used
+for detection. This pipeline does not download or delete plasma and energetic
+particle products. A long 2-month run still needs ample disk capacity and
+may stop safely on missing data or archive verification failure; completed
+daily checkpoints remain recoverable.
+
 ## Magnetic-event analysis
 
 **Default: analyze the original full-cadence source using the reader's CSV.**

@@ -604,7 +604,37 @@ def _plot_full_candidate(seed, number, sample, reference, magnitude,
     return str(path)
 
 
-def evaluate_full_seed(seed, number, plot=True):
+
+def _archive_one_second_context(seed, number, sample, reference,
+                                mag_reference, angle, folder):
+    """Preserve calibrated 1s vectors AND their actual local baselines.
+
+    Without this file the 181-minute reference cannot necessarily be
+    reconstructed after raw CDFs are deliberately cleared.
+    """
+    target_dir = Path(folder)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    basename = f'context_{pd.Timestamp(seed["start"]):%Y%m%d_%H%M%S}_{number}.csv.gz'
+    path = target_dir / basename
+    data = sample[['BR', 'BT', 'BN', 'Bmag']].copy()
+    for name in ('BR', 'BT', 'BN'):
+        data[f'background_{name}'] = reference[name]
+    data['background_Bmag'] = mag_reference
+    data['angle_deg'] = angle
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        data.to_csv(temporary, compression='gzip', index_label='UTC')
+        # Gzip CRC and row-count validation before publishing.
+        checked = pd.read_csv(temporary, compression='gzip', usecols=['UTC'])
+        if len(checked) != len(data):
+            raise RuntimeError(f'Context archive incomplete: {path}')
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return str(path)
+
+
+def evaluate_full_seed(seed, number, plot=True, context_dir=None):
     """Analyze candidate with local reference and native-cadence measurements."""
     sample, reference, mag_ref, left, right, unavailable = _full_window(seed)
     angle = deflection(sample, reference)
@@ -634,7 +664,11 @@ def evaluate_full_seed(seed, number, plot=True):
         ))
     figure = (_plot_full_candidate(seed, number, sample, reference, mag_ref,
                                    angle, events) if plot else '')
+    context_file = (_archive_one_second_context(
+        seed, number, sample, reference, mag_ref, angle, context_dir)
+        if context_dir is not None else '')
     return events, figure, dict(
+        window_context_archive=context_file,
         valid_seconds=int(sample[['BR','BT','BN']].notna().all(axis=1).sum()),
         total_seconds=len(sample),
         matched_reference_seconds=int(angle.notna().sum()),
@@ -1017,7 +1051,8 @@ def run_full_analysis(args, parser):
     for i, seed in enumerate(seeds.to_dict('records'), start=1):
         try:
             found, figure, diagnostics = evaluate_full_seed(
-                seed, i, plot=not args.no_plots)
+                seed, i, plot=not args.no_plots,
+                context_dir=args.window_archive_dir)
             events.extend(found)
             audit.append(dict(seed_utc=seed['start'],
                               seed_category=seed['category'],
@@ -1054,6 +1089,9 @@ def main():
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
     p.add_argument('--self-test',action='store_true')
     p.add_argument('--no-plots',action='store_true')
+    p.add_argument('--window-archive-dir',type=Path,default=None,
+                   help='Save 1-second magnetic vectors, 181-minute reference '
+                        'and rotation angle for each candidate window')
     p.add_argument('--position-source',choices=('cached-spc','spc','none'),
                    default='cached-spc',
                    help='Spacecraft HCI position: use cached SPC (default), '
@@ -1073,6 +1111,8 @@ def main():
         p.error('--candidate-index is only available with --mode full')
     if a.mode == 'legacy' and a.position_source != 'cached-spc':
         p.error('--position-source is only available with --mode full')
+    if a.mode == 'legacy' and a.window_archive_dir is not None:
+        p.error('--window-archive-dir requires --mode full')
     if a.top is None:
         a.top = 0 if a.mode == 'full' else 8
     if a.mode == 'full':

@@ -15,7 +15,6 @@ physical event classifier. Event segmentation is still under investigation.
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
 | `code/external_libraries_requirements.txt` | Required Python packages |
 | `code/magnetic_data_reader.py` | Read full-cadence FIELDS data and pre-screen arbitrary UTC time intervals; retains lower-cadence readers |
-| `code/magnetic_data_visualization.py` | Daily magnetic-field overview plots |
 | `code/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `results/` | Small set of retained detector catalogs and final validation summary |
 | `figures/` | Illustrations and figures used in the research document |
@@ -39,19 +38,17 @@ Raw NASA CDF data belong in the git-ignored `data/` cache. The loaders use
 NASA CDAWeb and fetch missing files when needed; FIELDS high-resolution data
 can be large.
 
-## Basic magnetic-field plots
+## Legacy FIELDS data access
 
 ```bash
 python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 1min
 python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 4cyc
-python code/magnetic_data_visualization.py --start 2018-11-06 --days 1
 ```
 
-Both FIELDS products are read through the same module: `get_day(day, resolution="1min")`
-or `get_day(day, resolution="4cyc")`. The detector uses the higher-cadence
-measurements for event timing and the one-minute measurements for its slowly
-varying magnetic reference. This does **not** manufacture high-resolution
-data from one-minute averages.
+Legacy products are available using `get_day(day, resolution="1min")`
+or `get_day(day, resolution="4cyc")`. For the current full-cadence
+workflow, the analysis script generates magnetic event plots directly;
+there is no separate visualization script.
 
 ## Scan any time range at full cadence
 

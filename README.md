@@ -13,8 +13,7 @@ physical event classifier. Event segmentation is still under investigation.
 | Path | Purpose |
 |---|---|
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
-| `psp_fields.py` | Download/read one-minute RTN magnetic fields |
-| `psp_highres.py` | Download/read four-samples-per-cycle RTN magnetic fields |
+| `psp_fields.py` | One magnetic-field reader for one-minute and four-samples-per-cycle FIELDS data |
 | `overview.py` | Daily magnetic-field overview plots |
 | `reference_detector_v2.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `config/survey_selected.csv` | Frozen set of 20 exploratory November 2018 seed windows |
@@ -43,9 +42,16 @@ can be large.
 ## Basic magnetic-field plots
 
 ```bash
-python psp_fields.py --start 2018-11-06 --days 1
+python psp_fields.py --start 2018-11-06 --days 1 --resolution 1min
+python psp_fields.py --start 2018-11-06 --days 1 --resolution 4cyc
 python overview.py --start 2018-11-06 --days 1
 ```
+
+Both FIELDS products are read through the same module: `get_day(day, resolution="1min")`
+or `get_day(day, resolution="4cyc")`. The detector uses the higher-cadence
+measurements for event timing and the one-minute measurements for its slowly
+varying magnetic reference. This does **not** manufacture high-resolution
+data from one-minute averages.
 
 ## Candidate switchback detector
 
@@ -71,11 +77,11 @@ This is **not** a reproduction of the published SPAN-i-based method.
 - Physically confirmed switchbacks and robust event boundaries: **not yet**.
 - Energetic-particle correlation analysis with IS☉IS: **future work**.
 
-**Reproducibility notice:** `psp_highres.py` was consolidated during cleanup
-because the earlier detector depended on an untracked local
-`switchback_survey.py`. The replacement is syntactically checked but must be
-tested against the local NASA CDF cache before claiming that rerunning the
-pipeline reproduces the previous catalogs exactly.
+**Reproducibility notice:** The high-resolution loading function has been merged into `psp_fields.py`.
+The original local `switchback_survey.py` was not tracked in Git; thus
+reproduction of the original event catalogs still needs checking against
+actual NASA CDF data on the research Mac. The refactor was tested with
+simulated CDF arrays but not yet rerun end-to-end on the user's CDF archive.
 
 ## Data acknowledgments
 

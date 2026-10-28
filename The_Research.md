@@ -484,8 +484,9 @@ method development have been archived on the
 [pre-cleanup Git branch](https://github.com/Epic-coder69/project-solar/tree/archive/pre-cleanup-2026-10-25).
 Links to intermediate evidence below refer to that preserved snapshot.
 The maintained FIELDS code and a small number of final catalogs/figures
-remain on the main branch. The replacement four-samples-per-cycle loader
-requires verification against the original local analysis environment before
+remain on the main branch. The current single-module FIELDS reader handles both one-minute and
+four-samples-per-cycle products. The high-resolution reader still requires
+verification against the original local analysis environment before
 claiming full rerun equivalence.
 
 ### 3.3 Statistical Results

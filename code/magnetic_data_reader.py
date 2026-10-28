@@ -18,6 +18,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 import re
+import sys
+import time
 
 import cdflib
 import numpy as np
@@ -25,6 +27,64 @@ import pandas as pd
 import requests
 
 BASE_API = "https://cdaweb.gsfc.nasa.gov/WS/cdasr/1/dataviews/sp_phys/datasets"
+
+def _progress_text(label, current, total=None, unit="records"):
+    """Compact ASCII bar for known totals; byte counter if total is unknown."""
+    if total is not None and total > 0:
+        fraction = min(1.0, max(0.0, current / total))
+        filled = int(28 * fraction)
+        track = "#" * filled + "-" * (28 - filled)
+        if unit == "bytes":
+            amounts = f"{current / 1048576:.1f}/{total / 1048576:.1f} MiB"
+        else:
+            amounts = f"{current:,}/{total:,} {unit}"
+        return f"[{label}] [{track}] {fraction * 100:5.1f}%  {amounts}"
+    amount = (f"{current / 1048576:.1f} MiB received" if unit == "bytes"
+              else f"{current:,} {unit}")
+    return f"[{label}] {amount} (total size unknown)"
+
+
+class _ProgressBar:
+    """Live stderr progress without any extra package requirement."""
+
+    def __init__(self, label, total=None, unit="records"):
+        self.label = label
+        self.total = total
+        self.unit = unit
+        self.current = 0
+        self.last_draw = 0.0
+        self.last_width = 0
+        self.draw(force=True)
+
+    def draw(self, force=False):
+        now = time.monotonic()
+        if not force and now - self.last_draw < 0.2:
+            return
+        message = _progress_text(
+            self.label, self.current, self.total, self.unit
+        )
+        # Keep progress visible in the Mac terminal without flooding it.
+        if sys.stderr.isatty():
+            sys.stderr.write("\r" + message.ljust(self.last_width))
+            self.last_width = max(self.last_width, len(message))
+        elif force:
+            sys.stderr.write(message + "\n")
+        else:
+            return
+        sys.stderr.flush()
+        self.last_draw = now
+
+    def advance(self, count):
+        self.current += count
+        self.draw()
+
+    def close(self):
+        self.draw(force=True)
+        if sys.stderr.isatty():
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+
 PRODUCTS = {
     "1min": {
         "dataset": "PSP_FLD_L2_MAG_RTN_1MIN",
@@ -226,6 +286,7 @@ def _full_day_files(day, start=None, end=None):
     stop = day + timedelta(days=1)
     api = f"{BASE_API}/{FULL_DATASET}/orig_data"
     url = f"{api}/{day:%Y%m%d}T000000Z,{stop:%Y%m%d}T000000Z/"
+    print(f"[NASA] Looking up full-cadence files for {day}...", flush=True)
     response = requests.get(url, headers={"Accept": "application/json"}, timeout=90)
     response.raise_for_status()
     descriptions = response.json().get("FileDescription", [])
@@ -252,12 +313,20 @@ def _full_day_files(day, start=None, end=None):
         target = FULL_CACHE / filename
         partial = target.with_suffix(".cdf.part")
         try:
+            print(f"[NASA] Downloading {filename}", flush=True)
             with requests.get(address, stream=True, timeout=(30, 180)) as stream:
                 stream.raise_for_status()
-                with partial.open("wb") as out:
-                    for block in stream.iter_content(1024 * 1024):
-                        if block:
-                            out.write(block)
+                length = stream.headers.get("Content-Length")
+                total_bytes = int(length) if length and length.isdigit() else None
+                progress = _ProgressBar("Download", total=total_bytes, unit="bytes")
+                try:
+                    with partial.open("wb") as out:
+                        for block in stream.iter_content(1024 * 1024):
+                            if block:
+                                out.write(block)
+                                progress.advance(len(block))
+                finally:
+                    progress.close()
             if partial.stat().st_size < 1024:
                 raise ValueError(f"Download unexpectedly small: {filename}")
             partial.replace(target)
@@ -350,42 +419,47 @@ def iter_full_cadence(day, records_per_chunk=250_000, start=None, end=None):
             flags = pd.Series(flag_values, index=flag_dates).sort_index()
             flags = flags[~flags.index.duplicated(keep="last")]
 
-        for first in range(first_record, stop_record, records_per_chunk):
-            final = min(first + records_per_chunk - 1, stop_record - 1)
-            raw = np.asarray(
-                cdf.varget(vector, startrec=first, endrec=final), dtype=float
-            )
-            index = pd.to_datetime(cdflib.cdfepoch.to_datetime(
-                cdf.varget(epoch, startrec=first, endrec=final)
-            ))
-            if raw.ndim != 2 or raw.shape[1] != 3 or len(raw) != len(index):
-                raise ValueError(f"Unexpected full-cadence vector shape in {path.name}")
-            if fill is not None and np.isscalar(fill):
-                raw[raw == float(fill)] = np.nan
-            raw[(~np.isfinite(raw)) | (np.abs(raw) > 1e6)] = np.nan
-            frame = pd.DataFrame(raw, index=index, columns=["BR", "BT", "BN"])
-            frame = frame[~frame.index.duplicated(keep="last")].sort_index()
-            if left is not None:
-                frame = frame.loc[frame.index >= left]
-            if right is not None:
-                frame = frame.loc[frame.index < right]
-            if frame.empty:
-                continue
-            if flags is not None:
-                aligned = flags.reindex(
-                    frame.index, method="nearest",
-                    tolerance=pd.Timedelta(seconds=35)
+        print(f"[FIELDS] Reading {path.name}", flush=True)
+        progress = _ProgressBar("Processing", total=stop_record-first_record)
+        try:
+            for first in range(first_record, stop_record, records_per_chunk):
+                final = min(first + records_per_chunk - 1, stop_record - 1)
+                raw = np.asarray(
+                    cdf.varget(vector, startrec=first, endrec=final), dtype=float
                 )
-                bad = aligned.isna().to_numpy() | (
-                    (aligned.fillna(0).astype("int64").to_numpy() & BAD_BITS) != 0
-                )
-                frame.loc[bad, ["BR", "BT", "BN"]] = np.nan
-            frame["Bmag"] = np.sqrt(
-                (frame[["BR", "BT", "BN"]] ** 2).sum(axis=1, min_count=3)
-            )
-            frame.index.name = "UTC"
-            if not frame.empty:
-                yield frame
+                index = pd.to_datetime(cdflib.cdfepoch.to_datetime(
+                    cdf.varget(epoch, startrec=first, endrec=final)
+                ))
+                if raw.ndim != 2 or raw.shape[1] != 3 or len(raw) != len(index):
+                    raise ValueError(f"Unexpected full-cadence vector shape in {path.name}")
+                if fill is not None and np.isscalar(fill):
+                    raw[raw == float(fill)] = np.nan
+                raw[(~np.isfinite(raw)) | (np.abs(raw) > 1e6)] = np.nan
+                frame = pd.DataFrame(raw, index=index, columns=["BR", "BT", "BN"])
+                frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+                if left is not None:
+                    frame = frame.loc[frame.index >= left]
+                if right is not None:
+                    frame = frame.loc[frame.index < right]
+                if not frame.empty:
+                    if flags is not None:
+                        aligned = flags.reindex(
+                            frame.index, method="nearest",
+                            tolerance=pd.Timedelta(seconds=35)
+                        )
+                        bad = aligned.isna().to_numpy() | (
+                            (aligned.fillna(0).astype("int64").to_numpy() & BAD_BITS) != 0
+                        )
+                        frame.loc[bad, ["BR", "BT", "BN"]] = np.nan
+                    frame["Bmag"] = np.sqrt(
+                        (frame[["BR", "BT", "BN"]] ** 2).sum(axis=1, min_count=3)
+                    )
+                    frame.index.name = "UTC"
+                progress.advance(final-first+1)
+                if not frame.empty:
+                    yield frame
+        finally:
+            progress.close()
 
 
 def full_cadence_seconds(day, records_per_chunk=250_000, start=None, end=None):
@@ -595,7 +669,12 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
     rows = []
     total_valid_seconds = 0
     last_day = (right - pd.Timedelta(nanoseconds=1)).normalize()
-    for day in pd.date_range(left.normalize(), last_day, freq="D"):
+    all_days = pd.date_range(left.normalize(), last_day, freq="D")
+    print(f"[SCAN] {left} to {right} UTC ({len(all_days)} calendar day(s))",
+          flush=True)
+    for day_number, day in enumerate(all_days, start=1):
+        print(f"[SCAN] Day {day_number}/{len(all_days)}: {day.date()}",
+              flush=True)
         core_left = max(left, day)
         core_right = min(right, day + pd.Timedelta(days=1))
         expected_seconds = max(1, int(np.ceil((core_right - core_left).total_seconds())))
@@ -627,6 +706,8 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                 continue
             parts.append(part)
         if not parts:
+            print(_progress_text("Overall scan", day_number, len(all_days), "days"),
+                  flush=True)
             print(f"[COVERAGE WARNING] {core_left} to {core_right}: no valid "
                   "observations (not a quiet interval)", flush=True)
             if on_day is not None:
@@ -636,11 +717,14 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
         series = series[~series.index.duplicated(keep="last")]
         core = series.loc[(series.index >= core_left) & (series.index < core_right)]
         if core.empty or not core[["BR","BT","BN"]].notna().all(axis=1).any():
+            print(_progress_text("Overall scan", day_number, len(all_days), "days"),
+                  flush=True)
             print(f"[COVERAGE WARNING] {core_left} to {core_right}: no valid "
                   "magnetic vectors (not a quiet interval)", flush=True)
             if on_day is not None:
                 on_day(day.date(), 0, 0, expected_seconds)
             continue
+        print("[SCREEN] Checking magnetic rotations...", flush=True)
         candidate = pre_screen_magnetic_rotations(series)
         if not candidate.empty:
             # Prevent duplication from the 100-minute context on adjacent days.
@@ -659,6 +743,8 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                   "must not be interpreted as an absence of switchbacks")
         if on_day is not None:
             on_day(day.date(), len(candidate), observed, expected_seconds)
+        print(_progress_text("Overall scan", day_number, len(all_days), "days"),
+              flush=True)
     if total_valid_seconds == 0:
         raise RuntimeError("No valid full-cadence observations in the requested "
                            "interval. No switchback screening catalog produced.")
@@ -707,7 +793,10 @@ def _screen_self_test():
     assert len(observed) == 2, f"Telemetric data gaps were bridged: {observed}"
     assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "10m") == pd.Timestamp("2018-11-06T12:10:00")
     assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "2mo") == pd.Timestamp("2019-01-06T12:00:00")
-    print("PASS: quiet/rotation screening, gap handling, record search, and range parsing")
+    sample_bar = _progress_text("Download", 5242880, 10485760, "bytes")
+    assert "50.0%" in sample_bar and "5.0/10.0 MiB" in sample_bar
+    assert "total size unknown" in _progress_text("Download", 524288, None, "bytes")
+    print("PASS: screening, gaps, record lookup, progress display, and range parsing")
 
 
 if __name__ == "__main__":

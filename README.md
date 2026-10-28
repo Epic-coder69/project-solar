@@ -14,7 +14,7 @@ physical event classifier. Event segmentation is still under investigation.
 |---|---|
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
 | `code/external_libraries_requirements.txt` | Required Python packages |
-| `code/magnetic_data_reader.py` | One magnetic-field reader for one-minute and four-samples-per-cycle FIELDS data |
+| `code/magnetic_data_reader.py` | Read FIELDS at existing cadences, stream full-cadence CDFs, and pre-screen candidate windows |
 | `code/magnetic_data_visualization.py` | Daily magnetic-field overview plots |
 | `code/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `results/` | Small set of retained detector catalogs and final validation summary |
@@ -52,6 +52,39 @@ or `get_day(day, resolution="4cyc")`. The detector uses the higher-cadence
 measurements for event timing and the one-minute measurements for its slowly
 varying magnetic reference. This does **not** manufacture high-resolution
 data from one-minute averages.
+
+## Full-cadence preliminary screening
+
+NASA FIELDS full-cadence RTN CDFs are split into four six-hour segments per
+day. The reader downloads/caches those original files under data/fields_full/
+and reads them in bounded record chunks. It retains a 1-second *screening*
+summary in memory, not the entire day of high-cadence samples.
+
+The preliminary screen uses a local 181-minute directional reference and
+permissive rotation thresholds. Output windows include five minutes of
+context on each side; they are **candidate investigation windows, not verified
+switchback boundaries**. The original calibrated full-resolution data remain
+in the local cache for later fine-scale analysis.
+
+Run the synthetic screening test without NASA downloads:
+
+```bash
+python code/magnetic_data_reader.py --self-test
+```
+
+To screen a full day (downloads large full-cadence CDFs if not cached):
+
+```bash
+python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --screen-full
+```
+
+This saves the screened windows as data/full_screen_20181106.csv. You can
+review the file or pass it to the existing analysis with --windows-csv, but
+**the existing analysis mode still uses 4cyc measurements**. Full-resolution
+*physical characterization* is the next step; do not interpret this first-pass
+screen as a validated switchback catalog. For future high-resolution analysis,
+the reader also offers read_full_interval(start, end), which streams only the
+samples inside a requested observation window.
 
 ## Candidate switchback detector
 

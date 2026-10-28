@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from psp_fields import days, get_day
+from magnetic_data_reader import days, get_day
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--start", default="2018-11-06")

@@ -7,7 +7,7 @@ One interface for the *two distinct NASA data products*:
 Both return a UTC-indexed DataFrame with BR, BT, BN and Bmag (nT).
 The products are not interchangeable: the low-cadence product is not
 interpolated into the high-cadence measurements. Event detection is handled
-separately by reference_detector_v2.py.
+separately by magnetic_data_analysis.py.
 """
 
 import argparse

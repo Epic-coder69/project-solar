@@ -13,7 +13,7 @@ SWEAP SPC Level 3: PSP_SWP_SPC_L3I, vp1_fit_RTN, sc_pos_HCI, general_flag.
                    This is not a reproduction of the published SPAN-i + SPC
                    fallback and filtered velocity method.
 
-Requires psp_fields.py (both one-minute and four-samples-per-cycle readers).
+Requires magnetic_data_reader.py (both one-minute and four-samples-per-cycle readers).
 Never labels any magnetic deflection as a confirmed physical switchback.
 """
 import argparse
@@ -30,7 +30,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from psp_fields import get_day, read_high
+from magnetic_data_reader import get_day, read_high
 
 DATA = Path('data')
 FIG = Path('figures')

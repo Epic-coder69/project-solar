@@ -122,65 +122,58 @@ events are **not confirmed physical switchbacks**. Independent plasma
 verification and synchronized particle visualization remain future work.
 
 
-## Long scans with event archiving and automatic raw-cache cleanup
+## Keep only the strongest events and clear the raw cache
 
-**Use the rolling pipeline instead of a 2-month reader-first command when
-disk space matters.** It processes one UTC day at a time:
+No third script is needed. Run the **reader for the entire selected interval**,
+then run the **analysis** with `--keep-strong-only`. This option first writes
+the normal event/registry/audit CSVs and then:
 
-1. Reader searches one day and saves its candidate CSV.
-2. Analysis characterizes all candidates and saves events/registry/audit.
-3. Analysis archives **every 1-second candidate-window waveform**, including
-   the observed RTN components, 181-minute background, magnitude and angle.
-4. The pipeline archives **every detected event** at the original native sample
-   cadence, including five minutes before/after each event, as gzip CSV.
-   No 90-degree or radial-reversal filter is used for archival.
-5. Only after all outputs and archives are checked does the optional cleanup
-   remove older full-cadence CDF files from **data/fields_full/**. It retains
-   the preceding day's files while processing adjacent days and never deletes
-   unrelated product caches or files outside the requested observation period.
-   Any day with less than 90% valid one-second coverage is kept intact.
+1. Selects events with **native peak rotation >=90 degrees**, **radial
+   reversal**, **median absolute |B| deviation <=10%** from the reference,
+   **uncensored boundaries**, and at least one valid native sample. This is
+   the same conservative operational screen used for the 21 promising events
+   found in our November 2, 2018 review.
+2. Saves `*_strong_events.csv` and `*_strong_registry.csv`, as well as a
+   checksummed `*_strong_archive_index.csv` and retention JSON manifest.
+3. Preserves **only selected events' quality-screened original-cadence RTN
+   magnetic measurements** (event +/- 5 minutes) as gzip CSV files. It also
+   keeps their 1-second waveforms, local 181-minute background vectors,
+   scalar reference, and deflection angle, for later plotting.
+4. Verifies each gzip archive and checksum **before deletion**. Raw deletion
+   is skipped if the reader checkpoint is missing/incomplete, scan coverage
+   is below 90%, any candidate window failed analysis, or a needed
+   background day is missing.
+5. Once everything passes, deletes only canonical six-hour original
+   `psp_fld_l2_mag_rtn_*_v*.cdf` files directly in
+   `data/fields_full/`, wholly within the reader's requested scan range.
+   It does not touch other FIELDS resolutions, SWEAP, IS☉IS, source code,
+   event catalogs, or files outside the matching scan.
 
-First run its safe, local synthetic tests:
-
-\`\`\`bash
-python code/magnetic_data_pipeline.py --self-test
+```bash
+# First verify synthetic tests (no NASA downloads)
 python code/magnetic_data_analysis.py --self-test
-\`\`\`
 
-Two-month unattended example (November 1, 2018 through January 1, 2019 UTC;
-run from the repository root, on a Mac connected to power with lid open):
+# Scan two months (2018-11-01 to 2019-01-01 UTC)
+python code/magnetic_data_reader.py --scan --start 2018-11-01 \
+  --duration 2mo --output data/nov_dec_2018_candidates.csv
 
-\`\`\`bash
-mkdir -p logs
-nohup caffeinate -is ./.venv/bin/python code/magnetic_data_pipeline.py \
-  --start 2018-11-01 --duration 2mo --cleanup-raw \
-  > logs/rolling_nov_dec_2018.log 2>&1 < /dev/null &
-tail -f logs/rolling_nov_dec_2018.log
-\`\`\`
+# Analyze all reader candidates; KEEP ONLY strong high-cadence archives;
+# automatically clean eligible original CDFs after the full run succeeds.
+python code/magnetic_data_analysis.py \
+  --windows-csv data/nov_dec_2018_candidates.csv \
+  --no-plots --keep-strong-only
+```
 
-To resume after interruption, rerun the same command with \`--resume\`.
-To preview the cleanup without actually removing any CDFs, add
-\`--dry-run-cleanup\` (requires \`--cleanup-raw\`). Leave out
-\`--cleanup-raw\` to keep the original CDFs. Add \`--plots\` only if PNG
-figures are needed for every window; PNGs are off by default to save space.
-
-Outputs are saved by day under \`data/rolling_<start>_<end>/\`, including
-daily checkpoints, event gzip files, one-second background archives and an
-event archive index. At successful completion the folder also contains
-\`all_events.csv\`, \`all_registry.csv\`, \`all_audit.csv\` and
-\`all_event_archives.csv\`.
-
-**Scientific and data-retention caveats:** Archived event samples are
-quality-filtered RTN magnetic vectors, *not* a lossless original NASA CDF.
-They do not preserve the full instrument metadata or raw quality-flag history.
-Quiet full-cadence intervals not inside event archives are deliberately
-discarded from the local cache when cleanup is enabled; original CDFs remain
-available for later download from NASA. A five-minute context is retained
-around each magnetic event, plus the 1-second local-background traces used
-for detection. This pipeline does not download or delete plasma and energetic
-particle products. A long 2-month run still needs ample disk capacity and
-may stop safely on missing data or archive verification failure; completed
-daily checkpoints remain recoverable.
+**Important:** Cleanup happens **at the end of analysis**, not while the
+reader runs. Therefore the reader still needs enough disk space to cache up to
+two months of six-hour raw files before deletion begins. The analysis does
+not resume mid-run; partial output CSVs persist, but interrupted runs need
+to be restarted. The raw CDFs are re-downloadable from NASA, whereas event
+gzip archives are derived, quality-screened vectors, **not a lossless copy**
+of the entire original CDF (instrument metadata and original quality-flag
+history are not retained). The small all-event CSVs remain as an audit trail,
+but only **strong events** receive high-resolution archives. The option is
+opt-in because it actually deletes local cache data.
 
 ## Magnetic-event analysis
 

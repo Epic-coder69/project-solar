@@ -21,6 +21,8 @@ Never labels any magnetic deflection as a confirmed physical switchback.
 """
 import argparse
 import hashlib
+import gzip
+import json
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -34,7 +36,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from magnetic_data_reader import get_day, read_high, full_cadence_seconds, read_full_interval
+from magnetic_data_reader import (get_day, read_high, full_cadence_seconds,
+                                  read_full_interval, FULL_CACHE, FULL_NAME)
 
 DATA = Path('data')
 FIG = Path('figures')
@@ -634,7 +637,7 @@ def _archive_one_second_context(seed, number, sample, reference,
     return str(path)
 
 
-def evaluate_full_seed(seed, number, plot=True, context_dir=None):
+def evaluate_full_seed(seed, number, plot=True):
     """Analyze candidate with local reference and native-cadence measurements."""
     sample, reference, mag_ref, left, right, unavailable = _full_window(seed)
     angle = deflection(sample, reference)
@@ -664,11 +667,7 @@ def evaluate_full_seed(seed, number, plot=True, context_dir=None):
         ))
     figure = (_plot_full_candidate(seed, number, sample, reference, mag_ref,
                                    angle, events) if plot else '')
-    context_file = (_archive_one_second_context(
-        seed, number, sample, reference, mag_ref, angle, context_dir)
-        if context_dir is not None else '')
     return events, figure, dict(
-        window_context_archive=context_file,
         valid_seconds=int(sample[['BR','BT','BN']].notna().all(axis=1).sum()),
         total_seconds=len(sample),
         matched_reference_seconds=int(angle.notna().sum()),
@@ -989,8 +988,336 @@ def full_self_test():
                return_value=(fake_position.shift(1, freq='h'), 'ok')):
         far = build_event_registry([synthetic_event])
     assert far.iloc[0]['position_status'] == 'no_position_within_120s'
+
+    # Strict strong-screen thresholds and native-cadence archival safety.
+    from tempfile import TemporaryDirectory
+    strong = dict(synthetic_event,
+                  native_valid_samples=25,
+                  native_peak_deflection_deg=120.,
+                  median_abs_Bmag_deviation_pct_approx=1.85,
+                  radial_reversal=True,
+                  left_censored=False, right_censored=False)
+    assert _is_strong_switchback(strong)
+    assert not _is_strong_switchback(dict(strong, radial_reversal=False))
+    assert not _is_strong_switchback(dict(
+        strong, median_abs_Bmag_deviation_pct_approx=10.1))
+    assert not _is_strong_switchback(dict(
+        strong, native_peak_deflection_deg=89.9))
+    assert not _is_strong_switchback(dict(strong, left_censored=True))
+    with TemporaryDirectory() as root:
+        folder = Path(root)
+        native_input = measured.copy()
+        archived = _archive_strong_native(
+            strong, folder / 'strong', context_minutes=0,
+            native_stream=iter([native_input]))
+        assert Path(archived['native_archive']).is_file()
+        assert archived['valid_event_samples'] == 25
+        assert archived['native_sha256'] == _strong_digest(
+            archived['native_archive'])
+        _strong_check_gzip(archived['native_archive'])
+        files = folder / 'fields_full'
+        files.mkdir()
+        allowed = files / 'psp_fld_l2_mag_rtn_2018110200_v02.cdf'
+        outside = files / 'psp_fld_l2_mag_rtn_2018110300_v02.cdf'
+        unrelated = files / 'test.txt'
+        allowed.write_bytes(b'synthetic bytes')
+        outside.write_bytes(b'keep original')
+        unrelated.write_text('not a cdf')
+        scoped = _strong_raw_files(pd.Timestamp('2018-11-02'),
+                                   pd.Timestamp('2018-11-03'), cache=files)
+        assert scoped == [allowed]
+        assert outside.is_file() and unrelated.is_file()
+        catalog = folder / 'candidates.csv'
+        checkpoint = Path(str(catalog) + '.checkpoint.json')
+        checkpoint.write_text(json.dumps({
+            'start': '2018-11-02T00:00:00',
+            'end': '2018-11-03T00:00:00',
+            'completed_day': '2018-11-02',
+            'valid_seconds': 86400
+        }))
+        assert _strong_reader_scan_bounds(catalog) == (
+            pd.Timestamp('2018-11-02'),
+            pd.Timestamp('2018-11-03'))
+        checkpoint.write_text(json.dumps({
+            'start': '2018-11-02T00:00:00',
+            'end': '2018-11-03T00:00:00',
+            'completed_day': '2018-11-01',
+            'valid_seconds': 86400
+        }))
+        try:
+            _strong_reader_scan_bounds(catalog)
+            raise AssertionError('Incomplete reader checkpoint was accepted')
+        except RuntimeError:
+            pass
     print('PASS: native magnetic metrics, 1s event segmentation, '
-          'stable IDs, correlation windows and spacecraft-position handling')
+          'stable IDs, strict strong selection, archives and safe cleanup')
+
+
+
+# Strict archival rule from the November 2 review: 21 of 110 passed.
+# This is a conservative *screen*, not a claim of formal validation.
+STRONG_MIN_PEAK_DEG = 90.
+STRONG_MAX_MEDIAN_BMAG_PCT = 10.
+
+
+def _is_strong_switchback(event):
+    """Keep only plausible, clean, uncensored magnetic switchback candidates."""
+    def enabled(value):
+        return value is True or str(value).lower() == 'true'
+    try:
+        return (float(event['native_peak_deflection_deg']) >=
+                STRONG_MIN_PEAK_DEG and
+                float(event['median_abs_Bmag_deviation_pct_approx']) <=
+                STRONG_MAX_MEDIAN_BMAG_PCT and
+                enabled(event['radial_reversal']) and
+                not enabled(event['left_censored']) and
+                not enabled(event['right_censored']) and
+                int(event['native_valid_samples']) > 0)
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return False
+
+
+def _strong_reader_scan_bounds(candidate_csv):
+    """Require proof that the reader FINISHED the full input scan."""
+    checkpoint = Path(str(candidate_csv) + '.checkpoint.json')
+    if not checkpoint.is_file():
+        raise RuntimeError(
+            f'Refusing raw cleanup: missing reader checkpoint {checkpoint}')
+    data = json.loads(checkpoint.read_text(encoding='utf-8'))
+    first = pd.Timestamp(data['start'])
+    end = pd.Timestamp(data['end'])
+    if first.tzinfo is not None:
+        first = first.tz_convert('UTC').tz_localize(None)
+    if end.tzinfo is not None:
+        end = end.tz_convert('UTC').tz_localize(None)
+    if end <= first:
+        raise RuntimeError('Reader checkpoint has invalid scan bounds')
+    last_day = (end - pd.Timedelta(nanoseconds=1)).normalize()
+    if pd.Timestamp(data['completed_day']).normalize() != last_day:
+        raise RuntimeError('Reader scan incomplete; cannot remove raw data')
+    elapsed = (end - first).total_seconds()
+    fraction = int(data['valid_seconds']) / elapsed
+    if fraction < .9:
+        raise RuntimeError(
+            f'Only {fraction:.1%} of the scan has valid 1-second coverage; '
+            'raw CDFs retained for follow-up')
+    return first, end
+
+
+def _strong_raw_files(start, end, cache=FULL_CACHE):
+    """Only canonical six-hour CDFs in our own cache and fully in this scan."""
+    cache = Path(cache)
+    if not cache.is_dir() or cache.is_symlink():
+        return []
+    files = []
+    for path in cache.iterdir():
+        if path.is_symlink() or not path.is_file():
+            continue
+        matched = FULL_NAME.fullmatch(path.name)
+        if matched is None or path.parent.resolve() != cache.resolve():
+            continue
+        segment = pd.to_datetime(matched.group(1), format='%Y%m%d%H')
+        if segment >= start and segment + pd.Timedelta(hours=6) <= end:
+            files.append(path)
+    return sorted(files)
+
+
+def _strong_digest(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as file:
+        for chunk in iter(lambda: file.read(1024*1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _strong_check_gzip(path):
+    with gzip.open(path, 'rb') as file:
+        for _ in iter(lambda: file.read(1024*1024), b''):
+            pass
+
+
+def _archive_strong_native(event, folder, context_minutes=5,
+                           native_stream=None):
+    """Original-cadence, quality-screened magnetic vectors, event +/- 5 min."""
+    if not _is_strong_switchback(event):
+        raise ValueError('Attempted to archive an event outside strong shortlist')
+    identifier = str(event['event_id'])
+    if not re.fullmatch(r'PSP-MAG-[A-Za-z0-9_-]+', identifier):
+        raise ValueError('Unexpected event ID')
+    start = pd.Timestamp(event['event_start_utc'])
+    end = pd.Timestamp(event['event_end_utc']) + pd.Timedelta(seconds=1)
+    left = start - pd.Timedelta(minutes=context_minutes)
+    right = end + pd.Timedelta(minutes=context_minutes)
+    output = Path(folder) / (identifier + '_native.csv.gz')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + '.part')
+    if native_stream is None:
+        native_stream = read_full_interval(left, right)
+    total = 0
+    inside_valid = 0
+    wrote_header = False
+    try:
+        with gzip.open(temporary, 'wt', encoding='utf-8') as handle:
+            for chunk in native_stream:
+                chunk = chunk.loc[(chunk.index >= left) &
+                                  (chunk.index < right)]
+                if chunk.empty:
+                    continue
+                columns = chunk[['BR', 'BT', 'BN', 'Bmag']]
+                within = columns.loc[(columns.index >= start) &
+                                     (columns.index < end)]
+                inside_valid += int(np.isfinite(
+                    within[['BR','BT','BN']].to_numpy(float)
+                ).all(axis=1).sum())
+                columns.to_csv(handle, header=not wrote_header,
+                               index_label='UTC')
+                wrote_header = True
+                total += len(columns)
+        expected = int(event['native_valid_samples'])
+        if not wrote_header or inside_valid < expected:
+            raise RuntimeError(
+                f'Native archive incomplete for {identifier}: '
+                f'{inside_valid} valid vs {expected} expected')
+        _strong_check_gzip(temporary)
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return dict(event_id=identifier, native_archive=str(output),
+                native_samples=total, valid_event_samples=inside_valid,
+                native_sha256=_strong_digest(output))
+
+
+def _archive_strong_context(event, folder, number):
+    """Store 1-second measured field AND computed background for re-plotting."""
+    left = pd.Timestamp(event['event_start_utc']) - pd.Timedelta(minutes=5)
+    right = pd.Timestamp(event['event_end_utc']) + pd.Timedelta(minutes=5)
+    seed = {'start':left.isoformat(), 'end':right.isoformat()}
+    sample, reference, magnitude, *_ = _full_window(seed)
+    rotation = deflection(sample, reference)
+    path = _archive_one_second_context(
+        seed, number, sample, reference, magnitude, rotation, folder)
+    _strong_check_gzip(path)
+    return dict(context_archive=path, context_sha256=_strong_digest(path),
+                context_seconds=len(sample))
+
+
+def _strong_write_csv(frame, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + '.tmp')
+    try:
+        frame.to_csv(tmp, index=False)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _archive_strong_then_cleanup(unique, audit, args, prefix,
+                                 output, registry_output):
+    """Archive strong events, verify files, THEN remove scoped local CDFs.
+
+    Fail closed: incomplete reader run, any analysis error or missing
+    background, or archive corruption prevents all raw CDF deletion.
+    """
+    start, end = _strong_reader_scan_bounds(args.windows_csv)
+    if any(row['error'] for row in audit):
+        raise RuntimeError('Analysis had errors; raw files left untouched')
+    if any(row.get('missing_background_days') for row in audit):
+        raise RuntimeError('Missing magnetic background; raw files retained')
+
+    strong = [event for event in unique if _is_strong_switchback(event)]
+    if not output.is_file() or not registry_output.is_file():
+        raise RuntimeError('Missing main catalogs; raw files retained')
+    catalog = pd.read_csv(output)
+    registry = pd.read_csv(registry_output)
+    if len(catalog) != len(unique) or len(registry) != len(unique):
+        raise RuntimeError('Incomplete event catalogs; raw files retained')
+    strong_ids = {e['event_id'] for e in strong}
+    if not strong_ids.issubset(set(registry['event_id'])):
+        raise RuntimeError('Registry missing strong event IDs')
+
+    folder = DATA / (prefix + '_strong_archive')
+    strong_table = DATA / (prefix + '_strong_events.csv')
+    strong_registry = DATA / (prefix + '_strong_registry.csv')
+    archive_index = DATA / (prefix + '_strong_archive_index.csv')
+    manifest_file = DATA / (prefix + '_strong_retention.json')
+
+    indexes = []
+    for number, event in enumerate(strong, start=1):
+        print(f'[STRONG {number}/{len(strong)}] {event["event_start_utc"]}',
+              flush=True)
+        native = _archive_strong_native(event, folder)
+        context = _archive_strong_context(event, folder, number)
+        indexes.append(dict(**native, **context))
+
+    _strong_write_csv(
+        pd.DataFrame(strong, columns=FULL_EVENT_COLUMNS), strong_table)
+    _strong_write_csv(
+        registry.loc[registry.event_id.isin(strong_ids),
+                     EVENT_REGISTRY_COLUMNS], strong_registry)
+    _strong_write_csv(pd.DataFrame(
+        indexes, columns=[
+            'event_id', 'native_archive', 'native_samples',
+            'valid_event_samples', 'native_sha256', 'context_archive',
+            'context_sha256', 'context_seconds']), archive_index)
+
+    # Reopen AND checksum every saved file, including the selected catalogs.
+    saved = pd.read_csv(archive_index)
+    if len(saved) != len(strong):
+        raise RuntimeError('Strong archive index does not match catalog')
+    for item in saved.to_dict('records'):
+        for key, checksum in (
+            ('native_archive', 'native_sha256'),
+            ('context_archive', 'context_sha256')
+        ):
+            path = Path(item[key])
+            if not path.is_file() or _strong_digest(path) != item[checksum]:
+                raise RuntimeError(f'Archive corrupted/missing: {path}')
+            _strong_check_gzip(path)
+    reopened_strong = pd.read_csv(strong_table)
+    reopened_registry = pd.read_csv(strong_registry)
+    if (len(reopened_strong) != len(strong) or
+            set(reopened_strong['event_id']) != strong_ids or
+            set(reopened_registry['event_id']) != strong_ids):
+        raise RuntimeError('Strong event/registry output verification failed')
+
+    manifest = dict(
+        source_candidate_csv=str(args.windows_csv),
+        scan_start_utc=start.isoformat(), scan_end_utc=end.isoformat(),
+        selection='peak>=90deg AND radial_reversal AND median_abs_Bmag<=10pct '
+                  'AND not censored AND native_valid_samples>0',
+        total_magnetic_rotations=len(unique),
+        strong_events_retained=len(strong),
+        native_event_padding_minutes=5,
+        archives_csv=str(archive_index),
+        strong_events_csv=str(strong_table),
+        strong_registry_csv=str(strong_registry),
+        archive_index_sha256=_strong_digest(archive_index),
+        strong_events_sha256=_strong_digest(strong_table),
+        strong_registry_sha256=_strong_digest(strong_registry),
+        source_cdf_cache=str(FULL_CACHE),
+        note='Gzip archives contain quality-screened vectors and 1-second '
+             'background, not all original CDF metadata/quality flags.'
+    )
+    temporary = manifest_file.with_name(manifest_file.name + '.tmp')
+    try:
+        temporary.write_text(json.dumps(manifest, indent=2) + '\n',
+                             encoding='utf-8')
+        temporary.replace(manifest_file)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    eligible = _strong_raw_files(start, end)
+    removed, size_bytes = 0, 0
+    for path in eligible:
+        size_bytes += path.stat().st_size
+        path.unlink()
+        removed += 1
+    print(f'[STRONG ARCHIVED] {len(strong)}/{len(unique)} magnetic events; '
+          f'{len(eligible)} eligible CDFs removed '
+          f'({size_bytes/1073741824:.2f} GiB)', flush=True)
+    print(f'[STRONG OUTPUT] {strong_table}; {strong_registry}; '
+          f'{archive_index}; {manifest_file}', flush=True)
 
 
 def run_full_analysis(args, parser):
@@ -1051,8 +1378,7 @@ def run_full_analysis(args, parser):
     for i, seed in enumerate(seeds.to_dict('records'), start=1):
         try:
             found, figure, diagnostics = evaluate_full_seed(
-                seed, i, plot=not args.no_plots,
-                context_dir=args.window_archive_dir)
+                seed, i, plot=not args.no_plots)
             events.extend(found)
             audit.append(dict(seed_utc=seed['start'],
                               seed_category=seed['category'],
@@ -1077,6 +1403,13 @@ def run_full_analysis(args, parser):
     print(f'Saved {output}, {audit_output}, and {registry_output}')
     if not good:
         raise SystemExit('No windows analyzed successfully: see audit CSV')
+    if args.keep_strong_only:
+        if good != len(seeds):
+            raise SystemExit(
+                'Some windows failed. Strong retention/cleanup skipped; '
+                'inspect audit CSV.')
+        _archive_strong_then_cleanup(
+            unique, audit, args, prefix, output, registry_output)
 
 
 def main():
@@ -1089,9 +1422,9 @@ def main():
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
     p.add_argument('--self-test',action='store_true')
     p.add_argument('--no-plots',action='store_true')
-    p.add_argument('--window-archive-dir',type=Path,default=None,
-                   help='Save 1-second magnetic vectors, 181-minute reference '
-                        'and rotation angle for each candidate window')
+    p.add_argument('--keep-strong-only',action='store_true',
+                   help='After complete full analysis, archive ONLY strong '
+                        'magnetic events and delete safely scoped raw CDF cache')
     p.add_argument('--position-source',choices=('cached-spc','spc','none'),
                    default='cached-spc',
                    help='Spacecraft HCI position: use cached SPC (default), '
@@ -1111,8 +1444,11 @@ def main():
         p.error('--candidate-index is only available with --mode full')
     if a.mode == 'legacy' and a.position_source != 'cached-spc':
         p.error('--position-source is only available with --mode full')
-    if a.mode == 'legacy' and a.window_archive_dir is not None:
-        p.error('--window-archive-dir requires --mode full')
+    if a.mode == 'legacy' and a.keep_strong_only:
+        p.error('--keep-strong-only requires --mode full')
+    if a.keep_strong_only and (a.candidate_index is not None or
+                               a.top not in (None, 0)):
+        p.error('--keep-strong-only requires all candidate rows (no --top or --candidate-index)')
     if a.top is None:
         a.top = 0 if a.mode == 'full' else 8
     if a.mode == 'full':

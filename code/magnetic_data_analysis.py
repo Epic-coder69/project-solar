@@ -20,6 +20,7 @@ at one-second resolution; native samples are revisited for physical metrics.
 Never labels any magnetic deflection as a confirmed physical switchback.
 """
 import argparse
+import hashlib
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -417,7 +418,8 @@ def self_test():
 # ---------------------------------------------------------------------------
 
 FULL_EVENT_COLUMNS = [
-    'seed_utc', 'seed_category', 'event_start_utc', 'event_end_utc',
+    'event_id', 'seed_utc', 'seed_category', 'event_start_utc', 'event_end_utc',
+    'event_peak_utc',
     'observed_span_seconds', 'duration_seconds', 'left_censored',
     'right_censored', 'maximum_deflection_deg',
     'native_peak_deflection_deg', 'native_valid_samples',
@@ -616,10 +618,12 @@ def evaluate_full_seed(seed, number, plot=True):
             event_left, event_right, reference, mag_ref)
         censored = bool(clip_left or clip_right)
         events.append(dict(
+            event_id=_event_id(event_left, event_right),
             seed_utc=left.isoformat(),
             seed_category=str(seed.get('category', 'unknown')),
             event_start_utc=event_left.isoformat(),
             event_end_utc=event_right.isoformat(),
+            event_peak_utc=angle.iloc[i:j+1].idxmax().isoformat(),
             observed_span_seconds=duration,
             duration_seconds=(np.nan if censored else duration),
             left_censored=bool(clip_left),
@@ -636,6 +640,238 @@ def evaluate_full_seed(seed, number, plot=True):
         matched_reference_seconds=int(angle.notna().sum()),
         missing_background_days='; '.join(unavailable)
     )
+
+
+
+# Event metadata is kept separate from measured magnetic quantities: other
+# instruments can join by event_id and timestamp without re-running detection.
+EVENT_SCHEMA_VERSION = 'full_local_181min_v1'
+AU_KM = 149597870.7
+EVENT_REGISTRY_COLUMNS = [
+    'event_id', 'event_start_utc', 'event_peak_utc', 'event_end_utc',
+    'event_end_exclusive_utc', 'event_midpoint_utc',
+    'pre_start_utc', 'pre_end_exclusive_utc',
+    'during_start_utc', 'during_end_exclusive_utc',
+    'post_start_utc', 'post_end_exclusive_utc',
+    'broad_context_start_utc', 'broad_context_end_exclusive_utc',
+    'duration_seconds', 'maximum_deflection_deg',
+    'native_peak_deflection_deg', 'radial_reversal',
+    'median_abs_Bmag_deviation_pct_approx', 'max_abs_Bmag_deviation_pct',
+    'native_valid_samples', 'native_total_samples', 'native_valid_fraction',
+    'left_censored', 'right_censored', 'classification_status',
+    'magnetic_source_product', 'magnetic_coordinate_system',
+    'analysis_reference', 'algorithm_version', 'event_boundary_resolution_s',
+    'position_status', 'position_epoch_utc', 'position_time_offset_s',
+    'position_x_hci_km', 'position_y_hci_km', 'position_z_hci_km',
+    'heliocentric_distance_km', 'heliocentric_distance_au',
+    'heliocentric_distance_solar_radii',
+    'hci_longitude_deg', 'hci_latitude_deg',
+    'position_coordinate_system', 'position_source_product',
+    'position_source_file'
+]
+
+
+def _event_id(start, end, method='full_local_181min'):
+    """Deterministic ID for the same detected boundaries and algorithm.
+
+    A later change in event boundaries intentionally generates a new ID:
+    it is not a permanent physical identity across revised catalogs.
+    """
+    left = pd.Timestamp(start).isoformat()
+    right = pd.Timestamp(end).isoformat()
+    digest = hashlib.sha256(
+        f'PSP_FLD_L2_MAG_RTN|{EVENT_SCHEMA_VERSION}|{method}|'
+        f'{left}|{right}'.encode('utf-8')
+    ).hexdigest()[:12]
+    return f'PSP-MAG-{pd.Timestamp(start):%Y%m%dT%H%M%S}-{digest}'
+
+
+@lru_cache(maxsize=4)
+def _spc_position_day(day, source):
+    """Read ONLY spacecraft position and its own epoch from an SPC CDF.
+
+    Position metadata does not depend on the validity of proton/plasma fits.
+    'cached-spc' never downloads. 'spc' may download an SPC L3I day.
+    """
+    if source == 'none':
+        return None, 'disabled'
+    if source == 'cached-spc':
+        stamp = f'{day:%Y%m%d}'
+        available = [
+            p for p in SPC_CACHE.glob(f'*{stamp}*_v*.cdf')
+            if 'spc_l3i' in p.name.lower()
+        ]
+        if not available:
+            return None, 'no_cached_ephemeris'
+        path = max(available, key=lambda p: latest_version(p.name))
+    elif source == 'spc':
+        try:
+            path = spc_file(day)
+        except Exception as exc:
+            print(f'[POSITION] {day}: SPC not available: {exc}', flush=True)
+            return None, 'ephemeris_unavailable'
+    else:
+        raise ValueError(f'Unknown position source: {source}')
+    try:
+        cdf = cdflib.CDF(str(path))
+        names = {n.lower(): n for n in
+                 list(cdf.cdf_info().zVariables) +
+                 list(cdf.cdf_info().rVariables)}
+        position_key = names.get('sc_pos_hci')
+        if position_key is None:
+            return None, 'position_variable_missing'
+        attributes = cdf.varattsget(position_key)
+        units = attributes.get('UNITS', attributes.get('units', ''))
+        if isinstance(units, (list, tuple, np.ndarray)):
+            units = units[0] if len(units) else ''
+        if isinstance(units, bytes):
+            units = units.decode()
+        if str(units).strip().lower() != 'km':
+            return None, 'unverified_position_units'
+        epoch_key = attributes.get('DEPEND_0',
+                                   attributes.get('depend_0', ''))
+        if isinstance(epoch_key, (list, tuple, np.ndarray)):
+            epoch_key = epoch_key[0] if len(epoch_key) else ''
+        if isinstance(epoch_key, bytes):
+            epoch_key = epoch_key.decode()
+        if not epoch_key:
+            epoch_key = names.get('epoch')
+        if not epoch_key:
+            return None, 'position_epoch_missing'
+        times = pd.to_datetime(cdflib.cdfepoch.to_datetime(
+            cdf.varget(epoch_key)))
+        vectors = np.asarray(cdf.varget(position_key), dtype=float)
+        if vectors.ndim != 2 or vectors.shape != (len(times), 3):
+            return None, 'invalid_position_shape'
+        frame = pd.DataFrame(vectors, index=times, columns=['x', 'y', 'z'])
+        frame = frame[~frame.index.duplicated(keep='last')].sort_index()
+        valid = (np.isfinite(frame[['x', 'y', 'z']]).all(axis=1) &
+                 (frame[['x', 'y', 'z']].abs() < 3e8).all(axis=1))
+        frame = frame.loc[valid]
+        if frame.empty:
+            return None, 'no_valid_position_samples'
+        frame.attrs['source_file'] = path.name
+        return frame, 'ok'
+    except Exception as exc:
+        print(f'[POSITION] {day}: could not read SPC position: {exc}',
+              flush=True)
+        return None, 'ephemeris_read_error'
+
+
+def _position_metadata(midpoint, position_source='cached-spc'):
+    """Look up nearest observed HCI position, never extrapolate across gaps."""
+    empty = {
+        'position_epoch_utc': '',
+        'position_time_offset_s': np.nan,
+        'position_x_hci_km': np.nan,
+        'position_y_hci_km': np.nan,
+        'position_z_hci_km': np.nan,
+        'heliocentric_distance_km': np.nan,
+        'heliocentric_distance_au': np.nan,
+        'heliocentric_distance_solar_radii': np.nan,
+        'hci_longitude_deg': np.nan,
+        'hci_latitude_deg': np.nan,
+        'position_coordinate_system': 'HCI',
+        'position_source_product': '',
+        'position_source_file': ''
+    }
+    mid = pd.Timestamp(midpoint)
+    frame, status = _spc_position_day(mid.date(), position_source)
+    if frame is None:
+        return dict(position_status=status, **empty)
+    ix = frame.index.get_indexer(
+        [mid], method='nearest', tolerance=pd.Timedelta(minutes=2))[0]
+    if ix < 0:
+        return dict(position_status='no_position_within_120s', **empty)
+    when = frame.index[ix]
+    x, y, z = (float(value) for value in frame.iloc[ix][['x','y','z']])
+    distance = float(np.sqrt(x*x + y*y + z*z))
+    if not SOLAR_RADIUS_KM*2 <= distance < 3e8:
+        return dict(position_status='invalid_heliocentric_distance', **empty)
+    return dict(
+        position_status='ok',
+        position_epoch_utc=when.isoformat(),
+        position_time_offset_s=round((when - mid).total_seconds(), 3),
+        position_x_hci_km=round(x, 3),
+        position_y_hci_km=round(y, 3),
+        position_z_hci_km=round(z, 3),
+        heliocentric_distance_km=round(distance, 3),
+        heliocentric_distance_au=round(distance / AU_KM, 8),
+        heliocentric_distance_solar_radii=round(
+            distance / SOLAR_RADIUS_KM, 6),
+        hci_longitude_deg=round(
+            float(np.degrees(np.arctan2(y, x)) % 360), 6),
+        hci_latitude_deg=round(
+            float(np.degrees(np.arcsin(np.clip(z/distance, -1, 1)))), 6),
+        position_coordinate_system='HCI',
+        position_source_product='PSP_SWP_SPC_L3I:sc_pos_HCI',
+        position_source_file=frame.attrs.get('source_file', '')
+    )
+
+
+def build_event_registry(events, position_source='cached-spc',
+                         context_minutes=5, broad_minutes=30):
+    """Create event-metadata rows ready to join with other instrument data.
+
+    Correlation intervals are half-open [start, end). Events have one-second
+    boundary precision; end+1 second is the exclusive end of the event bin.
+    Empty spacecraft positions are explicitly marked as unavailable.
+    """
+    registered = []
+    for event in events:
+        start = pd.Timestamp(event['event_start_utc'])
+        end = pd.Timestamp(event['event_end_utc'])
+        if end < start:
+            raise ValueError('Registry event has reversed time boundaries')
+        exclusive = end + pd.Timedelta(seconds=1)
+        midpoint = start + (exclusive - start) / 2
+        before = start - pd.Timedelta(minutes=context_minutes)
+        after = exclusive + pd.Timedelta(minutes=context_minutes)
+        r_start = start - pd.Timedelta(minutes=broad_minutes)
+        r_end = exclusive + pd.Timedelta(minutes=broad_minutes)
+        total = int(event.get('native_total_samples', 0))
+        valid = int(event.get('native_valid_samples', 0))
+        peak = event.get('event_peak_utc', '')
+        registered.append(dict(
+            event_id=event.get('event_id') or _event_id(start, end),
+            event_start_utc=start.isoformat(),
+            event_peak_utc=peak,
+            event_end_utc=end.isoformat(),
+            event_end_exclusive_utc=exclusive.isoformat(),
+            event_midpoint_utc=midpoint.isoformat(),
+            pre_start_utc=before.isoformat(),
+            pre_end_exclusive_utc=start.isoformat(),
+            during_start_utc=start.isoformat(),
+            during_end_exclusive_utc=exclusive.isoformat(),
+            post_start_utc=exclusive.isoformat(),
+            post_end_exclusive_utc=after.isoformat(),
+            broad_context_start_utc=r_start.isoformat(),
+            broad_context_end_exclusive_utc=r_end.isoformat(),
+            duration_seconds=event.get('duration_seconds', np.nan),
+            maximum_deflection_deg=event.get('maximum_deflection_deg', np.nan),
+            native_peak_deflection_deg=event.get(
+                'native_peak_deflection_deg', np.nan),
+            radial_reversal=event.get('radial_reversal', False),
+            median_abs_Bmag_deviation_pct_approx=event.get(
+                'median_abs_Bmag_deviation_pct_approx', np.nan),
+            max_abs_Bmag_deviation_pct=event.get(
+                'max_abs_Bmag_deviation_pct', np.nan),
+            native_valid_samples=valid,
+            native_total_samples=total,
+            native_valid_fraction=(round(valid/total, 6)
+                                   if total else np.nan),
+            left_censored=event.get('left_censored', False),
+            right_censored=event.get('right_censored', False),
+            classification_status=event.get(
+                'status', 'unvalidated_magnetic_rotation'),
+            magnetic_source_product='PSP_FLD_L2_MAG_RTN',
+            magnetic_coordinate_system='RTN',
+            analysis_reference=event.get('reference','full_local_181min'),
+            algorithm_version=EVENT_SCHEMA_VERSION,
+            event_boundary_resolution_s=1,
+            **_position_metadata(midpoint, position_source=position_source)
+        ))
+    return pd.DataFrame(registered, columns=EVENT_REGISTRY_COLUMNS)
 
 
 def full_self_test():
@@ -679,8 +915,48 @@ def full_self_test():
         })
     assert len(find_events(deflection(sliced, baseline))) == 1
     assert float(scalar.loc[idx[65]]) == 80.
-    print('PASS: native-cadence physical metrics, 1s event segmentation, '
-          'and candidate-core handling')
+    # Registry survives repeated runs with unchanged boundaries, and returns
+    # explicit missing positions when ephemeris is unavailable.
+    synthetic_event = dict(
+        event_id=_event_id(idx[65], idx[89]),
+        event_start_utc=idx[65].isoformat(),
+        event_peak_utc=idx[65].isoformat(),
+        event_end_utc=idx[89].isoformat(),
+        native_valid_samples=75, native_total_samples=80,
+        duration_seconds=25., status='unvalidated_magnetic_rotation',
+        reference='full_local_181min'
+    )
+    assert _event_id(idx[65], idx[89]) == synthetic_event['event_id']
+    assert _event_id(idx[65], idx[90]) != synthetic_event['event_id']
+    missing = build_event_registry([synthetic_event], position_source='none')
+    assert len(missing) == 1
+    assert missing.iloc[0]['position_status'] == 'disabled'
+    assert pd.isna(missing.iloc[0]['position_x_hci_km'])
+    assert missing.iloc[0]['pre_end_exclusive_utc'] == idx[65].isoformat()
+    assert missing.iloc[0]['during_end_exclusive_utc'] == (
+        idx[89] + pd.Timedelta(seconds=1)).isoformat()
+    assert missing.iloc[0]['post_start_utc'] == (
+        idx[89] + pd.Timedelta(seconds=1)).isoformat()
+    assert missing.iloc[0]['native_valid_fraction'] == round(75/80, 6)
+    mid = pd.Timestamp(missing.iloc[0]['event_midpoint_utc'])
+    fake_position = pd.DataFrame(
+        {'x':[30e6], 'y':[40e6], 'z':[0.]}, index=pd.DatetimeIndex([mid]))
+    fake_position.attrs['source_file'] = 'synthetic_spc_l3i.cdf'
+    with patch(__name__ + '._spc_position_day',
+               return_value=(fake_position, 'ok')):
+        positioned = build_event_registry(
+            [synthetic_event], position_source='cached-spc')
+    assert positioned.iloc[0]['event_id'] == missing.iloc[0]['event_id']
+    assert positioned.iloc[0]['position_status'] == 'ok'
+    assert positioned.iloc[0]['heliocentric_distance_km'] == 50e6
+    assert positioned.iloc[0]['hci_longitude_deg'] == round(
+        float(np.degrees(np.arctan2(4,3))), 6)
+    with patch(__name__ + '._spc_position_day',
+               return_value=(fake_position.shift(1, freq='h'), 'ok')):
+        far = build_event_registry([synthetic_event])
+    assert far.iloc[0]['position_status'] == 'no_position_within_120s'
+    print('PASS: native magnetic metrics, 1s event segmentation, '
+          'stable IDs, correlation windows and spacecraft-position handling')
 
 
 def run_full_analysis(args, parser):
@@ -718,14 +994,18 @@ def run_full_analysis(args, parser):
     prefix = f'full_analysis_{catalog_name}{suffix}'
     output = DATA / f'{prefix}_events.csv'
     audit_output = DATA / f'{prefix}_audit.csv'
+    registry_output = DATA / f'{prefix}_registry.csv'
 
     def save_progress():
         # Tiny catalogs are atomically replaced after each candidate; safe to
         # open from another terminal while a long analysis continues.
         unique_now = deduplicate(events)
+        registry = build_event_registry(
+            unique_now, position_source=args.position_source)
         for path, frame in (
             (output, pd.DataFrame(unique_now, columns=FULL_EVENT_COLUMNS)),
             (audit_output, pd.DataFrame(audit)),
+            (registry_output, registry),
         ):
             temporary = path.with_name(path.name + '.tmp')
             try:
@@ -759,7 +1039,7 @@ def run_full_analysis(args, parser):
     print(f'COMPLETE: {len(seeds)} screening windows; '
           f'{len(events)} candidate event detections; '
           f'{len(unique)} after dedup; {good}/{len(seeds)} windows processed')
-    print(f'Saved {output} and {audit_output}')
+    print(f'Saved {output}, {audit_output}, and {registry_output}')
     if not good:
         raise SystemExit('No windows analyzed successfully: see audit CSV')
 
@@ -774,6 +1054,10 @@ def main():
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
     p.add_argument('--self-test',action='store_true')
     p.add_argument('--no-plots',action='store_true')
+    p.add_argument('--position-source',choices=('cached-spc','spc','none'),
+                   default='cached-spc',
+                   help='Spacecraft HCI position: use cached SPC (default), '
+                        'download missing SPC days, or skip positions')
     p.add_argument('--windows-csv',type=Path,default=None,
                    help='Reader candidate CSV in full mode; legacy mode defaults to built-in 20 windows')
     a=p.parse_args()
@@ -787,6 +1071,8 @@ def main():
         p.error('--candidate-index must be positive')
     if a.mode == 'legacy' and a.candidate_index is not None:
         p.error('--candidate-index is only available with --mode full')
+    if a.mode == 'legacy' and a.position_source != 'cached-spc':
+        p.error('--position-source is only available with --mode full')
     if a.top is None:
         a.top = 0 if a.mode == 'full' else 8
     if a.mode == 'full':

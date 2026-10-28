@@ -135,6 +135,9 @@ python code/magnetic_data_analysis.py --self-test
 # First try one targeted candidate (CSV row 11), without plotting
 python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots
 
+# Optional: retrieve SPC position files when they're not already cached
+python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots --position-source spc
+
 # Analyze all 20 Nov 2 investigation windows, with figures
 python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv
 ```
@@ -152,8 +155,32 @@ It creates:
   the local scalar baseline.
 - `data/full_analysis_november_02_candidates_audit.csv` — how many events each screening window
   yielded, valid-data/reference coverage, missing background days and errors.
+- `data/full_analysis_november_02_candidates_registry.csv` — stable event
+  IDs (for unchanged boundaries), event start/peak/end/midpoint UTC times,
+  before/during/after windows for instrument correlations, quality and
+  magnetic provenance, and spacecraft position when available.
 - `figures/full_analysis_*.png` — **1-second display plots** with magnetic
   components, scalar magnitude, local reference and threshold crossings.
+
+The events and registry CSVs share an `event_id` for future joins with
+SWEAP plasma, IS☉IS particles and FIELDS wave data. Pre/during/post
+windows use five minutes before/after the event, plus a wider 30-minute
+context. Correlation intervals are half-open in UTC: the 1-second event
+end is treated as inclusive, with an additional `end_exclusive` timestamp
+for clean alignment. The registry does not fetch plasma density,
+temperature, or particle flux; future modules will use these timestamps
+to align instrument data at their actual cadences.
+
+Spacecraft metadata is sourced **only** from `sc_pos_HCI` in
+`PSP_SWP_SPC_L3I`; it has HCI Cartesian coordinates in km and derived
+distance/latitude/longitude in that same inertial frame (**not** Carrington
+coordinates). By default `--position-source cached-spc` uses only locally
+cached SPC CDFs and never downloads more data. Specify `--position-source spc`
+to obtain missing source CDFs, or `--position-source none` to disable it.
+Positions are matched to the event midpoint only when a sample exists within
+120 seconds. Otherwise fields remain empty and `position_status` records
+why (no fabricated interpolation). Physical plasma-variable quality flags
+are not used to mask the spacecraft ephemeris.
 
 These CSVs are updated **after every processed candidate window**, not
 only at the end.
@@ -182,8 +209,9 @@ Legacy results retain their previous `corrected_*` paths.
 
 - Reading and preprocessing FIELDS magnetic-field vectors: **working**.
 - Automatic rotation/switchback *candidate* extraction: **working**.
-- New full-cadence analysis with magnetic diagnostics: **implemented; synthetic
-  self-test included, requires real-data validation on the research Mac**.
+- New full-cadence analysis with magnetic diagnostics and a correlation-ready
+  event registry: **implemented; synthetic self-tests included, requires
+  real-data validation on the research Mac**.
 - Independent validation: **completed exploratory comparison, inconclusive
   detector ranking**; see [holdout findings](results/holdout_findings.md).
 - Physically confirmed switchbacks and robust event boundaries: **not yet**.

@@ -14,6 +14,8 @@ magnetic_data_analysis.py.
 """
 
 import argparse
+import json
+from tempfile import TemporaryDirectory
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -648,7 +650,107 @@ def _merge_screened_windows(records):
     return pd.DataFrame(result)
 
 
-def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
+
+# Incremental catalogs: one CSV per user-requested range, updated after
+# every completed day. An internal JSON checkpoint supports interruption.
+SCAN_STATE_VERSION = 1
+CANDIDATE_COLUMNS = [
+    "start", "end", "category", "peak_angle_deg",
+    "core_start", "core_end", "screening_method"
+]
+TIME_COLUMNS = ("start", "end", "core_start", "core_end")
+
+
+def _catalog_from_records(records):
+    merged = _merge_screened_windows(records)
+    if merged.empty:
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    return merged.reindex(columns=CANDIDATE_COLUMNS).sort_values(
+        "start"
+    ).reset_index(drop=True)
+
+
+def _atomic_text(path, content):
+    """Write atomically so VS Code never opens a half-written catalog."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _checkpoint_file(output):
+    return Path(str(output) + ".checkpoint.json")
+
+
+def _save_scan_checkpoint(output, start, end, completed_day, rows, valid_seconds):
+    """Save restart state first, then publish the candidate CSV.
+
+    If interrupted after checkpointing but before the CSV update,
+    --resume repairs the CSV automatically from checkpoint state.
+    """
+    output = Path(output)
+    state = {
+        "version": SCAN_STATE_VERSION,
+        "start": _as_utc_naive(start).isoformat(),
+        "end": _as_utc_naive(end).isoformat(),
+        "completed_day": pd.Timestamp(completed_day).date().isoformat(),
+        "valid_seconds": int(valid_seconds),
+        "raw_candidates": [
+            {key: (pd.Timestamp(value).isoformat() if key in TIME_COLUMNS
+                   else value) for key, value in row.items()}
+            for row in rows
+        ],
+    }
+    _atomic_text(_checkpoint_file(output), json.dumps(state, indent=2) + "\n")
+    catalog = _catalog_from_records(rows)
+    _atomic_text(output, catalog.to_csv(index=False))
+    print(f"[SAVED] {state['completed_day']}: {len(catalog)} windows "
+          f"available now in {output}", flush=True)
+    return catalog
+
+
+def _load_scan_checkpoint(output, start, end):
+    """Load saved progress for precisely the same requested UTC interval."""
+    state_path = _checkpoint_file(output)
+    if not state_path.is_file():
+        raise FileNotFoundError(
+            f"No checkpoint at {state_path}. Run without --resume to start. "
+            "Scans started before checkpointing was added cannot be resumed."
+        )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if (state.get("version") != SCAN_STATE_VERSION
+        or state.get("start") != _as_utc_naive(start).isoformat()
+        or state.get("end") != _as_utc_naive(end).isoformat()):
+        raise ValueError(
+            "Checkpoint does not match this scan or code version. "
+            "Use the original start/end/output or start without --resume."
+        )
+    completed_day = pd.Timestamp(state["completed_day"]).normalize()
+    last_day = (_as_utc_naive(end) - pd.Timedelta(nanoseconds=1)).normalize()
+    if not _as_utc_naive(start).normalize() <= completed_day <= last_day:
+        raise ValueError("Checkpoint day falls outside the requested interval")
+    rows = []
+    for saved in state["raw_candidates"]:
+        row = dict(saved)
+        for key in TIME_COLUMNS:
+            row[key] = _as_utc_naive(row[key])
+        rows.append(row)
+    valid_seconds = int(state["valid_seconds"])
+    if valid_seconds < 0:
+        raise ValueError("Invalid checkpoint coverage")
+    # Repair stale CSV after a crash between the two atomic writes.
+    _atomic_text(output, _catalog_from_records(rows).to_csv(index=False))
+    return completed_day, rows, valid_seconds
+
+
+def scan_time_range(start, end, records_per_chunk=250_000, on_day=None,
+                    on_checkpoint=None, resume_after=None,
+                    initial_records=None, initial_valid_seconds=0):
     """Screen an arbitrary UTC [start, end) interval at full MAG cadence.
 
     The user specifies one time range; the implementation automatically
@@ -666,13 +768,17 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
     if right <= left:
         raise ValueError("End time must be later than start time")
     halo = pd.Timedelta(minutes=100)
-    rows = []
-    total_valid_seconds = 0
+    rows = list(initial_records) if initial_records is not None else []
+    total_valid_seconds = int(initial_valid_seconds)
+    completed_before = (_as_utc_naive(resume_after).normalize()
+                        if resume_after is not None else None)
     last_day = (right - pd.Timedelta(nanoseconds=1)).normalize()
     all_days = pd.date_range(left.normalize(), last_day, freq="D")
     print(f"[SCAN] {left} to {right} UTC ({len(all_days)} calendar day(s))",
           flush=True)
     for day_number, day in enumerate(all_days, start=1):
+        if completed_before is not None and day <= completed_before:
+            continue
         print(f"[SCAN] Day {day_number}/{len(all_days)}: {day.date()}",
               flush=True)
         core_left = max(left, day)
@@ -712,6 +818,8 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                   "observations (not a quiet interval)", flush=True)
             if on_day is not None:
                 on_day(day.date(), 0, 0, expected_seconds)
+            if on_checkpoint is not None:
+                on_checkpoint(day.date(), rows, total_valid_seconds)
             continue
         series = pd.concat(parts).sort_index()
         series = series[~series.index.duplicated(keep="last")]
@@ -723,6 +831,8 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
                   "magnetic vectors (not a quiet interval)", flush=True)
             if on_day is not None:
                 on_day(day.date(), 0, 0, expected_seconds)
+            if on_checkpoint is not None:
+                on_checkpoint(day.date(), rows, total_valid_seconds)
             continue
         print("[SCREEN] Checking magnetic rotations...", flush=True)
         candidate = pre_screen_magnetic_rotations(series)
@@ -745,13 +855,12 @@ def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
             on_day(day.date(), len(candidate), observed, expected_seconds)
         print(_progress_text("Overall scan", day_number, len(all_days), "days"),
               flush=True)
+        if on_checkpoint is not None:
+            on_checkpoint(day.date(), rows, total_valid_seconds)
     if total_valid_seconds == 0:
         raise RuntimeError("No valid full-cadence observations in the requested "
                            "interval. No switchback screening catalog produced.")
-    result = _merge_screened_windows(rows)
-    if not result.empty:
-        result = result.sort_values("start").reset_index(drop=True)
-    return result
+    return _catalog_from_records(rows)
 
 
 def _screen_self_test():
@@ -796,7 +905,32 @@ def _screen_self_test():
     sample_bar = _progress_text("Download", 5242880, 10485760, "bytes")
     assert "50.0%" in sample_bar and "5.0/10.0 MiB" in sample_bar
     assert "total size unknown" in _progress_text("Download", 524288, None, "bytes")
-    print("PASS: screening, gaps, record lookup, progress display, and range parsing")
+    with TemporaryDirectory() as tmp:
+        output = Path(tmp) / "test_candidates.csv"
+        record = dict(start=t0, end=t0 + pd.Timedelta(minutes=10),
+                      core_start=t0 + pd.Timedelta(minutes=5),
+                      core_end=t0 + pd.Timedelta(minutes=6),
+                      category="screened_full", peak_angle_deg=89.9,
+                      screening_method="synthetic")
+        first = _save_scan_checkpoint(
+            output, t0, t0 + pd.Timedelta(days=2), t0.date(),
+            [record], 86400
+        )
+        assert output.is_file() and len(first) == 1
+        saved_day, saved_rows, valid = _load_scan_checkpoint(
+            output, t0, t0 + pd.Timedelta(days=2)
+        )
+        assert saved_day == t0 and valid == 86400
+        assert len(saved_rows) == 1
+        assert saved_rows[0]["core_start"] == record["core_start"]
+        assert len(pd.read_csv(output)) == 1
+        try:
+            _load_scan_checkpoint(output, t0, t0 + pd.Timedelta(days=3))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Checkpoint range validation failed")
+    print("PASS: screening, progress, incremental save/resume, and range parsing")
 
 
 if __name__ == "__main__":
@@ -817,6 +951,8 @@ if __name__ == "__main__":
                         help="Automatically pre-screen the entire selected time range")
     parser.add_argument("--output", type=Path, default=None,
                         help="Optional location for the candidate-window CSV")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue an interrupted scan from its saved checkpoint")
     parser.add_argument("--self-test", action="store_true",
                         help="Test preliminary screening without NASA downloads")
     args = parser.parse_args()
@@ -837,13 +973,31 @@ if __name__ == "__main__":
         def report(day, candidates, valid, expected):
             print(f"[{day}] {valid}/{expected} valid one-second bins; "
                   f"{candidates} preliminary windows (before merging)", flush=True)
-        selection = scan_time_range(start, end, on_day=report)
         output = args.output or (
             Path("data") /
             f"magnetic_scan_{start:%Y%m%dT%H%M%S}_{end:%Y%m%dT%H%M%S}.csv"
         )
-        output.parent.mkdir(parents=True, exist_ok=True)
-        selection.to_csv(output, index=False)
+        if args.resume:
+            try:
+                resume_after, previous_rows, prior_valid = _load_scan_checkpoint(
+                    output, start, end
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                parser.error(str(exc))
+            print(f"[RESUME] Continuing after {resume_after.date()} "
+                  f"with {len(previous_rows)} original candidates", flush=True)
+        else:
+            resume_after, previous_rows, prior_valid = None, [], 0
+        def save_day(day, rows, valid):
+            _save_scan_checkpoint(output, start, end, day, rows, valid)
+        selection = scan_time_range(
+            start, end, on_day=report, on_checkpoint=save_day,
+            resume_after=resume_after, initial_records=previous_rows,
+            initial_valid_seconds=prior_valid
+        )
+        # Only the combined CSV remains after the scan completes.
+        _atomic_text(output, selection.to_csv(index=False))
+        _checkpoint_file(output).unlink(missing_ok=True)
         print(f"COMPLETE: {len(selection)} investigation windows; saved {output}")
     else:
         if args.end is not None or args.duration is not None:

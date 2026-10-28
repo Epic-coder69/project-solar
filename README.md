@@ -91,10 +91,30 @@ python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 3mo
 python code/magnetic_data_reader.py --scan --start 2018-11-06T12:00:00 --end 2018-11-06T15:00:00
 ```
 
-Output goes into a *single* candidate-window CSV under data/ for the
-requested interval; use --output to set an alternative destination. There
-is no fixed span limit in the interface, but missing NASA data, download
-sizes, disk space and computing time still apply.
+Output goes into a **single candidate CSV** under data/ for the
+requested interval; use --output to set another location. **The reader
+updates that CSV after every completed day**, while the following days are
+still downloading. A small `.checkpoint.json` sidecar keeps unmerged
+candidate windows for resuming an interrupted scan:
+
+```bash
+# Start a month-long scan; inspect its CSV while the program continues
+python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo
+
+# If interrupted by Ctrl+C, continue from the last completed day
+python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo --resume
+```
+
+The same start/end range and --output path must be used when resuming.
+The checkpoint sidecar is removed automatically on successful completion.
+Partial days currently in progress are **not** checkpointed; the reader
+reprocesses that day if interrupted. Original NASA CDF downloads remain cached.
+Scans made before this update cannot be resumed retroactively.
+
+The output contains *preliminary investigation windows*, not scientifically
+confirmed switchbacks, and the existing event-window merging can still
+combine separate magnetic rotations. There is no fixed duration limit,
+but missing NASA data, download sizes, disk space and computing time apply.
 
 **Current division of work:** the reader can now pre-screen full cadence
 for arbitrary ranges. The separate magnetic analysis still uses the

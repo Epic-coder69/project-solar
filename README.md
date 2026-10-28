@@ -14,7 +14,7 @@ physical event classifier. Event segmentation is still under investigation.
 |---|---|
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
 | `code/external_libraries_requirements.txt` | Required Python packages |
-| `code/magnetic_data_reader.py` | Read FIELDS at existing cadences, stream full-cadence CDFs, and pre-screen candidate windows |
+| `code/magnetic_data_reader.py` | Read full-cadence FIELDS data and pre-screen arbitrary UTC time intervals; retains lower-cadence readers |
 | `code/magnetic_data_visualization.py` | Daily magnetic-field overview plots |
 | `code/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `results/` | Small set of retained detector catalogs and final validation summary |
@@ -53,38 +53,55 @@ measurements for event timing and the one-minute measurements for its slowly
 varying magnetic reference. This does **not** manufacture high-resolution
 data from one-minute averages.
 
-## Full-cadence preliminary screening
+## Scan any time range at full cadence
 
-NASA FIELDS full-cadence RTN CDFs are split into four six-hour segments per
-day. The reader downloads/caches those original files under data/fields_full/
-and reads them in bounded record chunks. It retains a 1-second *screening*
-summary in memory, not the entire day of high-cadence samples.
+The reader can pre-screen **one continuous UTC time interval**: minutes,
+hours, days, weeks, or months. You do not have to choose the six-hour
+CDF files or issue separate commands for each date. NASA publishes
+full-cadence MAG RTN measurements in six-hour files; the reader retrieves
+only the overlapping segments plus the 100-minute context needed to
+estimate the magnetic background. Full-cadence CDFs are cached locally
+under ignored data/fields_full/ and never discarded when nothing is detected.
 
-The preliminary screen uses a local 181-minute directional reference and
-permissive rotation thresholds. Output windows include five minutes of
-context on each side; they are **candidate investigation windows, not verified
-switchback boundaries**. The original calibrated full-resolution data remain
-in the local cache for later fine-scale analysis.
+The internal work is streaming and memory-bounded. A 1-second representation
+is used for *permissive screening*, preserving original full-resolution
+samples on disk for detailed analysis. Candidate windows include five
+minutes of surrounding context. Missing or sparse coverage is reported;
+these are **not physically confirmed switchback events**.
 
-Run the synthetic screening test without NASA downloads:
+Run synthetic tests without NASA downloads:
 
 ```bash
 python code/magnetic_data_reader.py --self-test
 ```
 
-To screen a full day (downloads large full-cadence CDFs if not cached):
+Request any UTC interval in a single command:
 
 ```bash
-python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --screen-full
+# Ten minutes
+python code/magnetic_data_reader.py --scan --start 2018-11-07T03:30:00 --duration 10m
+
+# Two weeks
+python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 2w
+
+# Three calendar months
+python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 3mo
+
+# Exact start and exclusive end
+python code/magnetic_data_reader.py --scan --start 2018-11-06T12:00:00 --end 2018-11-06T15:00:00
 ```
 
-This saves the screened windows as data/full_screen_20181106.csv. You can
-review the file or pass it to the existing analysis with --windows-csv, but
-**the existing analysis mode still uses 4cyc measurements**. Full-resolution
-*physical characterization* is the next step; do not interpret this first-pass
-screen as a validated switchback catalog. For future high-resolution analysis,
-the reader also offers read_full_interval(start, end), which streams only the
-samples inside a requested observation window.
+Output goes into a *single* candidate-window CSV under data/ for the
+requested interval; use --output to set an alternative destination. There
+is no fixed span limit in the interface, but missing NASA data, download
+sizes, disk space and computing time still apply.
+
+**Current division of work:** the reader can now pre-screen full cadence
+for arbitrary ranges. The separate magnetic analysis still uses the
+older 4-samples-per-cycle measurements; full-cadence detailed physics
+analysis and synchronized visualization have not been implemented yet.
+The reader's read_full_interval(start,end) exposes the original measured
+samples for that later stage.
 
 ## Candidate switchback detector
 

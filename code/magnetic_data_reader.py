@@ -1,13 +1,16 @@
 """Parker Solar Probe FIELDS magnetic-field reader.
 
-One interface for the *two distinct NASA data products*:
-  get_day(date, resolution="1min")  -- one-minute Level-2 RTN averages
-  get_day(date, resolution="4cyc")  -- four-samples-per-cycle Level-2 RTN
+One interface for PSP/FIELDS Level-2 RTN products:
+  get_day(date, resolution="1min")   -- one-minute averages
+  get_day(date, resolution="4cyc")   -- four samples per instrument cycle
+  scan_time_range(start, end)        -- arbitrary interval, full-cadence pre-screen
+  read_full_interval(start, end)     -- original full-cadence samples
 
 Both return a UTC-indexed DataFrame with BR, BT, BN and Bmag (nT).
 The products are not interchangeable: the low-cadence product is not
-interpolated into the high-cadence measurements. Event detection is handled
-separately by magnetic_data_analysis.py.
+interpolated into high-cadence measurements. The reader only performs a
+permissive pre-screen. Scientific characterization belongs to
+magnetic_data_analysis.py.
 """
 
 import argparse
@@ -177,10 +180,33 @@ FULL_CACHE = Path("data/fields_full")
 FULL_NAME = re.compile(r"^psp_fld_l2_mag_rtn_(\d{10})_v\d+\.cdf$", re.I)
 
 
-def _full_day_files(day):
-    """Return all full-cadence segments for a day, not just the latest file."""
+def _as_utc_naive(value):
+    """Normalize an ISO date/time to UTC for matching NASA UTC CDF epochs."""
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp):
+        raise ValueError("A valid timestamp is required")
+    return (timestamp.tz_convert("UTC").tz_localize(None)
+            if timestamp.tzinfo is not None else timestamp)
+
+
+def _segment_hours(day, start=None, end=None):
+    """Return six-hour files overlapping the requested [start, end) interval."""
+    midnight = pd.Timestamp(day).normalize()
+    left = _as_utc_naive(start) if start is not None else midnight
+    right = _as_utc_naive(end) if end is not None else midnight + pd.Timedelta(days=1)
+    return tuple(hour for hour in (0, 6, 12, 18)
+                 if midnight + pd.Timedelta(hours=hour) < right
+                 and midnight + pd.Timedelta(hours=hour+6) > left)
+
+
+def _full_day_files(day, start=None, end=None):
+    """Cache only full-cadence six-hour segments intersecting [start, end)."""
     day = pd.Timestamp(day).date()
     marker = day.strftime("%Y%m%d")
+    required = {f"{marker}{hour:02d}" for hour in
+                _segment_hours(day, start=start, end=end)}
+    if not required:
+        return []
     FULL_CACHE.mkdir(parents=True, exist_ok=True)
 
     # A valid complete day should have four 6-hour segments. Retain
@@ -194,9 +220,8 @@ def _full_day_files(day):
                 if key not in known or version(path.name) > version(known[key].name):
                     known[key] = path
 
-    expected = {f"{marker}{hour:02d}" for hour in (0, 6, 12, 18)}
-    if expected.issubset(known):
-        return [known[key] for key in sorted(expected)]
+    if required.issubset(known):
+        return [known[key] for key in sorted(required)]
 
     stop = day + timedelta(days=1)
     api = f"{BASE_API}/{FULL_DATASET}/orig_data"
@@ -211,14 +236,14 @@ def _full_day_files(day):
         address = entry.get("Name", "")
         filename = Path(urlparse(address).path).name
         match = FULL_NAME.fullmatch(filename)
-        if not match or not match.group(1).startswith(marker):
+        if not match or match.group(1) not in required:
             continue
         key = match.group(1)
         if key not in remote or version(filename) > version(remote[key][0]):
             remote[key] = (filename, address)
 
-    if not remote and not known:
-        raise FileNotFoundError(f"No full-cadence MAG RTN files listed for {day}")
+    if not remote and not (required & set(known)):
+        raise FileNotFoundError(f"No requested full-cadence MAG RTN files listed for {day}")
 
     # Only download selected highest-version segments that we don't have.
     for key, (filename, address) in sorted(remote.items()):
@@ -240,17 +265,17 @@ def _full_day_files(day):
             partial.unlink(missing_ok=True)
         known[key] = target
 
-    # If the NASA inventory lists fewer than four segments, scanning the
-    # available coverage is allowed, but missing coverage must be disclosed.
-    paths = [known[key] for key in sorted(known)]
-    missing = sorted(expected - set(known))
+    # Requested 6-hour files may be absent; any incomplete scan coverage
+    # is explicitly reported to avoid treating data gaps as quiet solar wind.
+    paths = [known[key] for key in sorted(required & set(known))]
+    missing = sorted(required - set(known))
     if missing:
         print(f"[FIELDS full cadence] {day}: missing segments {missing}; "
               "screening only available coverage")
     return paths
 
 
-def iter_full_cadence(day, records_per_chunk=250_000):
+def iter_full_cadence(day, records_per_chunk=250_000, start=None, end=None):
     """Yield chronological, quality-screened full-cadence magnetic DataFrames.
 
     Uses CDF record ranges to bound RAM. The CDF files themselves are cached,
@@ -258,7 +283,9 @@ def iter_full_cadence(day, records_per_chunk=250_000):
     """
     if records_per_chunk < 1000:
         raise ValueError("records_per_chunk must be at least 1000")
-    for path in _full_day_files(day):
+    left = _as_utc_naive(start) if start is not None else None
+    right = _as_utc_naive(end) if end is not None else None
+    for path in _full_day_files(day, start=left, end=right):
         cdf = cdflib.CDF(str(path))
         names = {name.lower(): name for name in (
             list(cdf.cdf_info().zVariables) + list(cdf.cdf_info().rVariables)
@@ -298,7 +325,13 @@ def iter_full_cadence(day, records_per_chunk=250_000):
             raw[(~np.isfinite(raw)) | (np.abs(raw) > 1e6)] = np.nan
             frame = pd.DataFrame(raw, index=index, columns=["BR", "BT", "BN"])
             frame = frame[~frame.index.duplicated(keep="last")].sort_index()
-            if flags is not None and not frame.empty:
+            if left is not None:
+                frame = frame.loc[frame.index >= left]
+            if right is not None:
+                frame = frame.loc[frame.index < right]
+            if frame.empty:
+                continue
+            if flags is not None:
                 aligned = flags.reindex(
                     frame.index, method="nearest",
                     tolerance=pd.Timedelta(seconds=35)
@@ -315,7 +348,7 @@ def iter_full_cadence(day, records_per_chunk=250_000):
                 yield frame
 
 
-def full_cadence_seconds(day, records_per_chunk=250_000):
+def full_cadence_seconds(day, records_per_chunk=250_000, start=None, end=None):
     """Stream raw samples into a 1-second *screening* representation.
 
     Carry the unfinished final second into the next chunk to avoid
@@ -323,7 +356,7 @@ def full_cadence_seconds(day, records_per_chunk=250_000):
     """
     seconds = []
     pending = None
-    for chunk in iter_full_cadence(day, records_per_chunk):
+    for chunk in iter_full_cadence(day, records_per_chunk, start=start, end=end):
         frame = (pd.concat([pending, chunk]) if pending is not None else chunk)
         end_second = frame.index[-1].floor("s")
         done = frame.loc[frame.index < end_second, ["BR", "BT", "BN"]]
@@ -450,10 +483,123 @@ def read_full_interval(start, end, records_per_chunk=250_000):
     if right < left:
         raise ValueError("end must not precede start")
     for day in pd.date_range(left.normalize(), right.normalize()):
-        for chunk in iter_full_cadence(day.date(), records_per_chunk):
+        for chunk in iter_full_cadence(day.date(), records_per_chunk, start=left, end=right):
             selected = chunk.loc[(chunk.index >= left) & (chunk.index <= right)]
             if not selected.empty:
                 yield selected
+
+
+
+def _parse_duration(start, duration):
+    """A single request may specify minutes, hours, days, weeks or months."""
+    match = re.fullmatch(r"(\d+)(mo|min|m|h|d|w)", duration.strip().lower())
+    if not match:
+        raise ValueError("Duration must look like 10m, 2h, 5d, 3w or 2mo")
+    count, unit = int(match.group(1)), match.group(2)
+    if count == 0:
+        raise ValueError("Duration must be positive")
+    if unit == "mo":
+        return start + pd.DateOffset(months=count)
+    return start + pd.Timedelta(**{
+        "m": {"minutes": count}, "min": {"minutes": count},
+        "h": {"hours": count}, "d": {"days": count}, "w": {"weeks": count}
+    }[unit])
+
+
+def _merge_screened_windows(records):
+    """Combine overlapping context windows; event times are provisional."""
+    if not records:
+        return pd.DataFrame(columns=[
+            "start", "end", "category", "peak_angle_deg",
+            "core_start", "core_end", "screening_method"
+        ])
+    rows = sorted(records, key=lambda row: row["start"])
+    result = [rows[0].copy()]
+    for row in rows[1:]:
+        previous = result[-1]
+        if row["start"] <= previous["end"]:
+            previous["end"] = max(previous["end"], row["end"])
+            previous["core_start"] = min(previous["core_start"], row["core_start"])
+            previous["core_end"] = max(previous["core_end"], row["core_end"])
+            previous["peak_angle_deg"] = max(
+                previous["peak_angle_deg"], row["peak_angle_deg"])
+        else:
+            result.append(row.copy())
+    return pd.DataFrame(result)
+
+
+def scan_time_range(start, end, records_per_chunk=250_000, on_day=None):
+    """Screen an arbitrary UTC [start, end) interval at full MAG cadence.
+
+    The user specifies one time range; the implementation automatically
+    processes each day with 100-minute context across date boundaries. Only
+    one day's 1-second summaries plus neighboring margins are in RAM at a time.
+    Every day is read from original full-cadence CDFs, never from the NASA
+    1-minute or 4-samples/cycle products.
+
+    Output windows are candidate *investigation* intervals, not physically
+    validated switchback boundaries. Missing segments and sparse coverage are
+    reported; dates with no usable samples raise errors.
+    """
+    left, right = _as_utc_naive(start), _as_utc_naive(end)
+    if right <= left:
+        raise ValueError("End time must be later than start time")
+    halo = pd.Timedelta(minutes=100)
+    rows = []
+    last_day = (right - pd.Timedelta(nanoseconds=1)).normalize()
+    for day in pd.date_range(left.normalize(), last_day, freq="D"):
+        core_left = max(left, day)
+        core_right = min(right, day + pd.Timedelta(days=1))
+        around_left, around_right = core_left - halo, core_right + halo
+        parts = []
+        halo_last = (around_right - pd.Timedelta(nanoseconds=1)).normalize()
+        for neighboring_day in pd.date_range(
+            around_left.normalize(), halo_last, freq="D"
+        ):
+            midnight = neighboring_day
+            piece_start = max(around_left, midnight)
+            piece_end = min(around_right, midnight + pd.Timedelta(days=1))
+            try:
+                part = full_cadence_seconds(
+                    midnight.date(), records_per_chunk,
+                    start=piece_start, end=piece_end
+                )
+            except FileNotFoundError:
+                # External context at a NASA coverage edge may be absent.
+                # The requested core itself must have data.
+                if piece_end <= core_left or piece_start >= core_right:
+                    continue
+                raise
+            parts.append(part)
+        if not parts:
+            raise RuntimeError(f"No full-cadence measurements for {core_left} to {core_right}")
+        series = pd.concat(parts).sort_index()
+        series = series[~series.index.duplicated(keep="last")]
+        core = series.loc[(series.index >= core_left) & (series.index < core_right)]
+        if core.empty or not core[["BR","BT","BN"]].notna().any(axis=1).any():
+            raise RuntimeError(f"No usable magnetic measurements in {core_left} to {core_right}")
+        candidate = pre_screen_magnetic_rotations(series)
+        if not candidate.empty:
+            # Prevent duplication from the 100-minute context on adjacent days.
+            candidate = candidate.loc[
+                (candidate["core_end"] >= core_left) &
+                (candidate["core_start"] < core_right)
+            ]
+            for row in candidate.to_dict("records"):
+                rows.append(row)
+        observed = int(core[["BR","BT","BN"]].notna().all(axis=1).sum())
+        expected_seconds = max(1, int(np.ceil((core_right - core_left).total_seconds())))
+        coverage = min(1.0, observed / expected_seconds)
+        if coverage < 0.90:
+            print(f"[COVERAGE WARNING] {day.date()}: {coverage:.1%} of requested "
+                  "one-second bins have valid magnetic vectors; missing time "
+                  "must not be interpreted as an absence of switchbacks")
+        if on_day is not None:
+            on_day(day.date(), len(candidate), observed, expected_seconds)
+    result = _merge_screened_windows(rows)
+    if not result.empty:
+        result = result.sort_values("start").reset_index(drop=True)
+    return result
 
 
 def _screen_self_test():
@@ -470,32 +616,69 @@ def _screen_self_test():
     assert len(found) == 1, f"Expected one synthetic rotation: {found}"
     assert found.iloc[0]["core_start"] <= pd.Timestamp("2018-11-06 01:30:05")
     assert found.iloc[0]["core_end"] >= pd.Timestamp("2018-11-06 01:30:55")
-    print("PASS: full-cadence pre-screen synthetic quiet/rotation cases")
+    assert _segment_hours("2018-11-06",
+                          "2018-11-06T10:12:00",
+                          "2018-11-06T10:22:00") == (6,)
+    assert _segment_hours("2018-11-06",
+                          "2018-11-06T05:55:00",
+                          "2018-11-06T06:05:00") == (0, 6)
+    assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "10m") == pd.Timestamp("2018-11-06T12:10:00")
+    assert _parse_duration(pd.Timestamp("2018-11-06T12:00:00"), "2mo") == pd.Timestamp("2019-01-06T12:00:00")
+    print("PASS: synthetic pre-screen, 6-hour file targeting, and time-range parsing")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Read and pre-screen PSP/FIELDS RTN data")
-    parser.add_argument("--start", default="2018-11-06")
-    parser.add_argument("--days", type=int, default=1)
+    parser = argparse.ArgumentParser(
+        description="Read and pre-screen Parker Solar Probe full-cadence magnetic data"
+    )
+    parser.add_argument("--start", default="2018-11-06",
+                        help="UTC start date/time, e.g. 2018-11-06T03:30:00")
+    parser.add_argument("--end", default=None,
+                        help="UTC end date/time (exclusive)")
+    parser.add_argument("--duration", default=None,
+                        help="Duration from --start: 10m, 2h, 5d, 3w, 2mo")
+    parser.add_argument("--days", type=int, default=1,
+                        help="Default number of days if --end/--duration not provided")
     parser.add_argument("--resolution", choices=tuple(PRODUCTS), default="1min",
-                        help="Existing direct readers; full cadence is streamed via --screen-full")
-    parser.add_argument("--screen-full", action="store_true",
-                        help="Stream full cadence, perform permissive pre-screen, save candidate windows")
+                        help="Resolution for direct reading without --scan")
+    parser.add_argument("--scan", "--screen-full", dest="scan", action="store_true",
+                        help="Automatically pre-screen the entire selected time range")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Optional location for the candidate-window CSV")
     parser.add_argument("--self-test", action="store_true",
-                        help="Run synthetic pre-screen test without downloading NASA data")
+                        help="Test preliminary screening without NASA downloads")
     args = parser.parse_args()
     if args.self_test:
         _screen_self_test()
+    elif args.scan:
+        if args.end is not None and args.duration is not None:
+            parser.error("Choose either --end or --duration")
+        start = _as_utc_naive(args.start)
+        if args.duration is not None:
+            end = _parse_duration(start, args.duration)
+        elif args.end is not None:
+            end = _as_utc_naive(args.end)
+        else:
+            if args.days < 1:
+                parser.error("--days must be positive")
+            end = start + pd.Timedelta(days=args.days)
+        def report(day, candidates, valid, expected):
+            print(f"[{day}] {valid}/{expected} valid one-second bins; "
+                  f"{candidates} preliminary windows (before merging)", flush=True)
+        selection = scan_time_range(start, end, on_day=report)
+        output = args.output or (
+            Path("data") /
+            f"magnetic_scan_{start:%Y%m%dT%H%M%S}_{end:%Y%m%dT%H%M%S}.csv"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        selection.to_csv(output, index=False)
+        print(f"COMPLETE: {len(selection)} investigation windows; saved {output}")
     else:
+        if args.end is not None or args.duration is not None:
+            parser.error("--end/--duration require --scan for time-range screening")
+        if args.days < 1:
+            parser.error("--days must be positive")
         for day in days(args.start, args.days):
-            if args.screen_full:
-                candidates = screen_full_cadence(day)
-                output = Path("data") / f"full_screen_{day:%Y%m%d}.csv"
-                output.parent.mkdir(parents=True, exist_ok=True)
-                candidates.to_csv(output, index=False)
-                print(f"{day}: {len(candidates)} pre-screened magnetic windows; "
-                      f"saved {output}")
-            else:
-                df = get_day(day, resolution=args.resolution)
-                print(f"{day} [{args.resolution}]: {df.Bmag.notna().sum()} "
-                      f"valid samples of {len(df)}")
+            frame = get_day(day, resolution=args.resolution)
+            print(f"{day} [{args.resolution}]: {frame.Bmag.notna().sum()} "
+                  f"valid samples of {len(frame)}")

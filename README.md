@@ -132,8 +132,8 @@ verification and synchronized particle visualization remain future work.
 # Synthetic tests for both full-cadence and legacy logic (no downloads)
 python code/magnetic_data_analysis.py --self-test
 
-# First try one screening window, without plotting
-python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --top 1 --no-plots
+# First try one targeted candidate (CSV row 11), without plotting
+python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots
 
 # Analyze all 20 Nov 2 investigation windows, with figures
 python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv
@@ -157,7 +157,8 @@ It creates:
 
 These CSVs are updated **after every processed candidate window**, not
 only at the end.
-The filenames derive from the input CSV and optional `--top` limit, preventing
+The filenames derive from the input CSV and optional `--top` or
+`--candidate-index` selection, preventing
 scans of different days from overwriting each other's results. The native-cadence magnitude-deviation median uses a
 streaming histogram (approximately 0.1 percentage-point precision) to
 avoid storing millions of samples in memory. Event timestamps currently

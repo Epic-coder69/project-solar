@@ -699,15 +699,22 @@ def run_full_analysis(args, parser):
     if seeds.empty:
         print('No candidate rows in the CSV; no physical events to analyze.')
         return
-    seeds = seeds.sort_values('start')
-    if args.top:
+    seeds = seeds.sort_values('start').reset_index(drop=True)
+    if args.candidate_index is not None:
+        if args.top not in (None, 0):
+            parser.error('Choose either --candidate-index or --top')
+        if not 1 <= args.candidate_index <= len(seeds):
+            parser.error(f'--candidate-index must be between 1 and {len(seeds)}')
+        seeds = seeds.iloc[[args.candidate_index - 1]]
+    elif args.top:
         seeds = seeds.head(args.top)
     events, audit = [], []
     DATA.mkdir(parents=True, exist_ok=True)
     # Output names follow the input catalog, so two different observation
     # days do not overwrite each other's research results.
     catalog_name = re.sub(r'[^A-Za-z0-9_-]+', '_', args.windows_csv.stem)
-    suffix = (f'_top{args.top}' if args.top else '')
+    suffix = (f'_row{args.candidate_index}' if args.candidate_index is not None
+              else f'_top{args.top}' if args.top else '')
     prefix = f'full_analysis_{catalog_name}{suffix}'
     output = DATA / f'{prefix}_events.csv'
     audit_output = DATA / f'{prefix}_audit.csv'
@@ -760,6 +767,8 @@ def run_full_analysis(args, parser):
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('--top',type=int,default=None,help='Windows to analyze; 0=all (full mode default: all; legacy default: 8)')
+    p.add_argument('--candidate-index',type=int,default=None,
+                   help='Full mode: analyze exactly one 1-based row of the candidate CSV')
     p.add_argument('--mode',choices=('full','legacy'),default='full',
                    help='Full-cadence candidate analysis (default) or original 4cyc benchmark')
     p.add_argument('--reference',choices=('local','parker-spc'),default='local')
@@ -774,6 +783,10 @@ def main():
         return
     if a.top is not None and a.top < 0:
         p.error('--top must be nonnegative')
+    if a.candidate_index is not None and a.candidate_index < 1:
+        p.error('--candidate-index must be positive')
+    if a.mode == 'legacy' and a.candidate_index is not None:
+        p.error('--candidate-index is only available with --mode full')
     if a.top is None:
         a.top = 0 if a.mode == 'full' else 8
     if a.mode == 'full':

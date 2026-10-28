@@ -71,6 +71,12 @@ samples on disk for detailed analysis. Candidate windows include five
 minutes of surrounding context. Missing or sparse coverage is reported;
 these are **not physically confirmed switchback events**.
 
+For progress display, the reader updates its progress bar in place when
+run directly in a terminal. When run via `nohup` with redirected output,
+the reader instead writes approximately one progress line per second to
+the log file; follow it using `tail -f logs/nov_dec_2018.log`. A process
+already running must be restarted to pick up a newer version of the script.
+
 Run synthetic tests without NASA downloads:
 
 ```bash

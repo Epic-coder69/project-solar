@@ -60,19 +60,20 @@ class _ProgressBar:
 
     def draw(self, force=False):
         now = time.monotonic()
-        if not force and now - self.last_draw < 0.2:
+        interactive = sys.stderr.isatty()
+        # A live terminal gets an in-place bar; redirected/background logs
+        # get readable progress lines about once a second.
+        interval = 0.2 if interactive else 1.0
+        if not force and now - self.last_draw < interval:
             return
         message = _progress_text(
             self.label, self.current, self.total, self.unit
         )
-        # Keep progress visible in the Mac terminal without flooding it.
-        if sys.stderr.isatty():
+        if interactive:
             sys.stderr.write("\r" + message.ljust(self.last_width))
             self.last_width = max(self.last_width, len(message))
-        elif force:
-            sys.stderr.write(message + "\n")
         else:
-            return
+            sys.stderr.write(message + "\n")
         sys.stderr.flush()
         self.last_draw = now
 

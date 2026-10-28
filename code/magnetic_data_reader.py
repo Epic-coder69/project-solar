@@ -261,6 +261,156 @@ def _segment_hours(day, start=None, end=None):
                  and midnight + pd.Timedelta(hours=hour+6) > left)
 
 
+
+
+def _nasa_catalog_json(url, attempts=6, pause=time.sleep):
+    """Retry transient CDAWeb metadata API failures as well as CDF transfers."""
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(
+                url, headers={"Accept": "application/json"}, timeout=90)
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError("NASA response is not a JSON object")
+            return result
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            status = (exc.response.status_code
+                      if isinstance(exc, requests.exceptions.HTTPError)
+                      and exc.response is not None else None)
+            if (status is not None and status not in (408, 429)
+                    and status < 500):
+                raise
+            if attempt == attempts:
+                raise RuntimeError(
+                    f"NASA catalog unavailable after {attempts} attempts: "
+                    f"{exc}") from exc
+            wait = min(45, 2 ** (attempt - 1) * 3)
+            print(f"[NASA RETRY] Metadata request {attempt}/{attempts}: "
+                  f"{exc}; retrying in {wait}s", flush=True)
+            pause(wait)
+    raise RuntimeError("Unreachable NASA catalog retry state")
+
+
+def _download_full_cdf(address, target, attempts=6, pause=time.sleep):
+    """Retry interrupted NASA CDF downloads and resume verified byte ranges.
+
+    A .cdf.part file is intentionally kept on transient failures. We publish
+    the finished .cdf only after verifying the transfer size and CDF structure.
+    If the server ignores Range, restart from zero rather than append a
+    duplicate file. All failures remain visible in the scan log.
+    """
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_suffix(".cdf.part")
+    for attempt in range(1, attempts + 1):
+        existing = partial.stat().st_size if partial.exists() else 0
+        headers = {"Accept-Encoding": "identity"}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+        try:
+            print(f"[NASA] Downloading {target.name} "
+                  f"(attempt {attempt}/{attempts}, "
+                  f"{existing/1048576:.1f} MiB already cached)", flush=True)
+            with requests.get(address, headers=headers, stream=True,
+                              timeout=(30, 180)) as stream:
+                if stream.status_code == 416 and existing:
+                    # Cached partial is larger than the server's object.
+                    partial.unlink(missing_ok=True)
+                    raise requests.exceptions.ConnectionError(
+                        "Cached partial exceeds remote file; restarting")
+                stream.raise_for_status()
+
+                use_append = existing > 0 and stream.status_code == 206
+                expected_total = None
+                if use_append:
+                    content_range = stream.headers.get("Content-Range", "")
+                    match = re.fullmatch(
+                        r"bytes (\d+)-(\d+)/(\d+)", content_range)
+                    if (match is None or int(match.group(1)) != existing
+                            or int(match.group(2)) < existing):
+                        partial.unlink(missing_ok=True)
+                        raise requests.exceptions.ConnectionError(
+                            "Invalid resumed Content-Range; restarting")
+                    expected_total = int(match.group(3))
+                    if expected_total <= existing:
+                        partial.unlink(missing_ok=True)
+                        raise requests.exceptions.ConnectionError(
+                            "Invalid resumed object length; restarting")
+                    mode = "ab"
+                elif stream.status_code == 200:
+                    # The server did not honor Range: overwrite, never append.
+                    mode = "wb"
+                else:
+                    raise requests.exceptions.ConnectionError(
+                        f"Unexpected download status: {stream.status_code}")
+
+                length = stream.headers.get("Content-Length")
+                if length is not None and length.isdigit():
+                    received_size = int(length)
+                    total_from_length = (
+                        existing + received_size if use_append
+                        else received_size)
+                    if expected_total is not None and (
+                            total_from_length != expected_total):
+                        partial.unlink(missing_ok=True)
+                        raise requests.exceptions.ConnectionError(
+                            "Inconsistent response length for resumed CDF")
+                    expected_total = total_from_length
+
+                progress = _ProgressBar(
+                    "Download", total=expected_total, unit="bytes")
+                if mode == "ab":
+                    progress.advance(existing)
+                try:
+                    with partial.open(mode) as out:
+                        for block in stream.iter_content(1024 * 1024):
+                            if block:
+                                out.write(block)
+                                progress.advance(len(block))
+                finally:
+                    progress.close()
+
+            if not partial.is_file() or partial.stat().st_size < 1024:
+                raise IOError(f"Downloaded CDF too small: {target.name}")
+            if expected_total is not None and (
+                    partial.stat().st_size != expected_total):
+                raise requests.exceptions.ConnectionError(
+                    f"Incomplete CDF: got {partial.stat().st_size}, "
+                    f"expected {expected_total} bytes")
+
+            # Check that NASA's CDF structure is actually readable before
+            # promoting a partial download into the permanent cache.
+            try:
+                cdf = cdflib.CDF(str(partial))
+                info = cdf.cdf_info()
+                variables = {v.lower() for v in (
+                    list(info.zVariables) + list(info.rVariables))}
+                if (FULL_VECTOR.lower() not in variables or
+                        FULL_EPOCH.lower() not in variables):
+                    raise ValueError("Expected FIELDS variables missing")
+            except Exception as exc:
+                partial.unlink(missing_ok=True)
+                raise ValueError(
+                    f"Downloaded object is not a valid FIELDS CDF: {exc}"
+                ) from exc
+
+            partial.replace(target)
+            print(f"[NASA] Saved {target.name}", flush=True)
+            return target
+        except (requests.exceptions.RequestException, OSError,
+                ValueError) as exc:
+            if attempt == attempts:
+                raise RuntimeError(
+                    f"Failed to download {target.name} after {attempts} "
+                    f"attempts: {exc}") from exc
+            wait = min(45, 2 ** (attempt - 1) * 3)
+            print(f"[NASA RETRY] {target.name}: {type(exc).__name__}: "
+                  f"{exc}; retrying in {wait}s", flush=True)
+            pause(wait)
+    raise RuntimeError(f"Unreachable download state: {target.name}")
+
+
 def _full_day_files(day, start=None, end=None):
     """Cache only full-cadence six-hour segments intersecting [start, end)."""
     day = pd.Timestamp(day).date()
@@ -289,9 +439,7 @@ def _full_day_files(day, start=None, end=None):
     api = f"{BASE_API}/{FULL_DATASET}/orig_data"
     url = f"{api}/{day:%Y%m%d}T000000Z,{stop:%Y%m%d}T000000Z/"
     print(f"[NASA] Looking up full-cadence files for {day}...", flush=True)
-    response = requests.get(url, headers={"Accept": "application/json"}, timeout=90)
-    response.raise_for_status()
-    descriptions = response.json().get("FileDescription", [])
+    descriptions = _nasa_catalog_json(url).get("FileDescription", [])
     if isinstance(descriptions, dict):
         descriptions = [descriptions]
     remote = {}
@@ -313,28 +461,7 @@ def _full_day_files(day, start=None, end=None):
         if key in known and version(known[key].name) >= version(filename):
             continue
         target = FULL_CACHE / filename
-        partial = target.with_suffix(".cdf.part")
-        try:
-            print(f"[NASA] Downloading {filename}", flush=True)
-            with requests.get(address, stream=True, timeout=(30, 180)) as stream:
-                stream.raise_for_status()
-                length = stream.headers.get("Content-Length")
-                total_bytes = int(length) if length and length.isdigit() else None
-                progress = _ProgressBar("Download", total=total_bytes, unit="bytes")
-                try:
-                    with partial.open("wb") as out:
-                        for block in stream.iter_content(1024 * 1024):
-                            if block:
-                                out.write(block)
-                                progress.advance(len(block))
-                finally:
-                    progress.close()
-            if partial.stat().st_size < 1024:
-                raise ValueError(f"Download unexpectedly small: {filename}")
-            partial.replace(target)
-        finally:
-            partial.unlink(missing_ok=True)
-        known[key] = target
+        known[key] = _download_full_cdf(address, target)
 
     # Requested 6-hour files may be absent; any incomplete scan coverage
     # is explicitly reported to avoid treating data gaps as quiet solar wind.
@@ -930,6 +1057,58 @@ def _screen_self_test():
             pass
         else:
             raise AssertionError("Checkpoint range validation failed")
+
+    # A mid-stream disconnect must keep the partial and request only the rest.
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    with TemporaryDirectory() as tmp:
+        target = Path(tmp) / "test_download.cdf"
+        seen_headers = []
+
+        class FakeTransfer:
+            def __init__(self, status, headers, data, fail=False):
+                self.status_code = status
+                self.headers = headers
+                self.data = data
+                self.fail = fail
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def raise_for_status(self):
+                pass
+
+            def iter_content(self, size):
+                yield self.data
+                if self.fail:
+                    raise requests.exceptions.ChunkedEncodingError(
+                        "Synthetic incomplete NASA download")
+
+        def interrupted_get(url, **kwargs):
+            seen_headers.append(kwargs['headers'])
+            if len(seen_headers) == 1:
+                return FakeTransfer(
+                    200, {'Content-Length': '2048'}, b'A'*1024, fail=True)
+            return FakeTransfer(
+                206, {'Content-Length': '1024',
+                      'Content-Range': 'bytes 1024-2047/2048'},
+                b'B'*1024)
+
+        with patch("requests.get", side_effect=interrupted_get), \
+             patch("cdflib.CDF") as cdf_open:
+            cdf_open.return_value.cdf_info.return_value = SimpleNamespace(
+                zVariables=[FULL_VECTOR, FULL_EPOCH], rVariables=[])
+            output = _download_full_cdf(
+                "https://example.org/synthetic.cdf", target, attempts=2,
+                pause=lambda seconds: None)
+        assert output.read_bytes() == b'A'*1024 + b'B'*1024
+        assert 'Range' not in seen_headers[0]
+        assert seen_headers[1]['Range'] == 'bytes=1024-'
+        assert not target.with_suffix('.cdf.part').exists()
+
     print("PASS: screening, progress, incremental save/resume, and range parsing")
 
 
@@ -995,10 +1174,13 @@ if __name__ == "__main__":
             resume_after=resume_after, initial_records=previous_rows,
             initial_valid_seconds=prior_valid
         )
-        # Only the combined CSV remains after the scan completes.
+        # Retain the completed scan checkpoint as a verified coverage
+        # manifest. --keep-strong-only in magnetic_data_analysis.py needs
+        # its requested UTC bounds and valid-second coverage before
+        # authorizing irreversible raw-cache cleanup.
         _atomic_text(output, selection.to_csv(index=False))
-        _checkpoint_file(output).unlink(missing_ok=True)
         print(f"COMPLETE: {len(selection)} investigation windows; saved {output}")
+        print(f"[COVERAGE MANIFEST] {_checkpoint_file(output)}", flush=True)
     else:
         if args.end is not None or args.duration is not None:
             parser.error("--end/--duration require --scan for time-range screening")

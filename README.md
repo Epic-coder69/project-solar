@@ -58,7 +58,12 @@ CDF files or issue separate commands for each date. NASA publishes
 full-cadence MAG RTN measurements in six-hour files; the reader retrieves
 only the overlapping segments plus the 100-minute context needed to
 estimate the magnetic background. Full-cadence CDFs are cached locally
-under ignored data/fields_full/ and never discarded when nothing is detected.
+under ignored data/fields_full/. The reader retains raw files for the
+analysis stage; optional deletion happens only after verified strong-event
+archival. NASA metadata requests and CDF transfers retry transient errors
+(up to six attempts). Interrupted CDF transfers keep a temporary
+`.cdf.part` file and resume using HTTP byte ranges when supported; if the
+server ignores Range the file is safely restarted rather than appended.
 
 The internal work is streaming and memory-bounded. A 1-second representation
 is used for *permissive screening*, preserving original full-resolution
@@ -103,10 +108,13 @@ python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo --r
 ```
 
 The same start/end range and --output path must be used when resuming.
-The checkpoint sidecar is removed automatically on successful completion.
-Partial days currently in progress are **not** checkpointed; the reader
-reprocesses that day if interrupted. Original NASA CDF downloads remain cached.
-Scans made before this update cannot be resumed retroactively.
+The checkpoint sidecar **is retained after successful completion** because
+`magnetic_data_analysis.py --keep-strong-only` uses the finished scan's
+bounds and coverage before authorizing CDF cleanup. Partial days currently in
+progress are **not** checkpointed; the reader reprocesses that day if
+interrupted. Original NASA CDF downloads remain cached until analysis is
+finished, while incomplete transfers use resumable `.cdf.part` files.
+Scans made before the checkpoint feature cannot be resumed retroactively.
 
 The output contains *preliminary investigation windows*, not scientifically
 confirmed switchbacks, and the existing event-window merging can still

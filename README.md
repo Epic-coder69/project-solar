@@ -20,6 +20,12 @@ Our intended result is a **time-aligned, quality-controlled correlation study** 
 
 See [The_Research.md](The_Research.md) for scientific background, research questions, methodology, and previous exploratory work.
 
+## One proposed switchback formation mechanism
+
+![Interchange reconnection: an open magnetic field line interacts with a closed coronal loop, reconnects, and launches an outward-propagating magnetic switchback](https://commons.wikimedia.org/wiki/Special:FilePath/Illustration_of_global_magnetic_field_circulation_enabled_by_interchange_reconnection.jpg)
+
+*Illustration: open and closed coronal magnetic field lines (A) interact, (B) undergo interchange reconnection, and (C) launch an S-shaped magnetic deflection into the corona. This is **one proposed mechanism**, not an established origin of every switchback, and not itself evidence of particle acceleration. Source: [Fisk & Kasper (2020)](https://doi.org/10.3847/2041-8213/ab8acd); image by L. A. Fisk and J. C. Kasper, [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Illustration_of_global_magnetic_field_circulation_enabled_by_interchange_reconnection.jpg), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
+
 ## Current research status
 
 | Component | Status |

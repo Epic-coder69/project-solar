@@ -178,16 +178,39 @@ python code/magnetic_data_analysis.py \
   --no-plots --keep-strong-only
 ```
 
+**Finish an already completed analysis without repeating it:** If the
+reader and analysis have already saved their complete candidate, event,
+audit and registry CSVs, but strong archival or cleanup was blocked, run:
+
+```bash
+python code/magnetic_data_analysis.py \
+  --windows-csv data/nov_dec_2018_candidates.csv \
+  --no-plots --keep-strong-only --finalize-existing
+```
+
+This mode verifies that every reader investigation window has a successful
+audit row, the reader completion checkpoint matches the date range, and all
+events match their registry records. It then archives **only** the strong
+events before deleting scoped, locally cached CDF files.
+
+**Missing telemetry is not evidence of quiet solar wind.** A completed
+observation range can legitimately have less than 90% total coverage because
+NASA has no measurements during some hours or days. This is reported in the
+retention manifest but is not by itself a reason to reject available, strong
+events. Events affected by gaps should still be interpreted carefully;
+analysis errors, incomplete scans and archive verification failures still
+block cleanup.
+
 **Important:** Cleanup happens **at the end of analysis**, not while the
 reader runs. Therefore the reader still needs enough disk space to cache up to
-two months of six-hour raw files before deletion begins. The analysis does
-not resume mid-run; partial output CSVs persist, but interrupted runs need
-to be restarted. The raw CDFs are re-downloadable from NASA, whereas event
-gzip archives are derived, quality-screened vectors, **not a lossless copy**
-of the entire original CDF (instrument metadata and original quality-flag
-history are not retained). The small all-event CSVs remain as an audit trail,
-but only **strong events** receive high-resolution archives. The option is
-opt-in because it actually deletes local cache data.
+two months of six-hour raw files before deletion begins. Normal analysis
+does not resume mid-run; use `--finalize-existing` to archive from an
+already-complete analysis instead of repeating it. Original NASA CDFs can be
+downloaded again, while event gzip archives contain quality-screened vectors,
+**not lossless originals** (instrument metadata and original quality-flag
+history are not retained). Small all-event CSVs remain as an audit trail,
+but only **strong events** receive high-resolution archives. The deletion
+option is opt-in because it removes local cached CDF files.
 
 ## Magnetic-event analysis
 

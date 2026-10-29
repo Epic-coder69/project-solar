@@ -1049,6 +1049,48 @@ def full_self_test():
             raise AssertionError('Incomplete reader checkpoint was accepted')
         except RuntimeError:
             pass
+
+        # A completed scan with natural NASA telemetry gaps is still eligible
+        # to archive good events; it must not claim missing days are quiet.
+        checkpoint.write_text(json.dumps({
+            'start': '2018-11-02T00:00:00',
+            'end': '2018-11-03T00:00:00',
+            'completed_day': '2018-11-02',
+            'valid_seconds': 59098
+        }))
+        assert _strong_reader_scan_bounds(catalog) == (
+            pd.Timestamp('2018-11-02'),
+            pd.Timestamp('2018-11-03'))
+        # A finished catalog can be finalized without doing the full-cadence
+        # detection pass a second time. Mock only irreversible archival.
+        from argparse import Namespace, ArgumentParser
+        with patch(__name__ + '.DATA', folder):
+            source = folder / 'synthetic_existing.csv'
+            pd.DataFrame([{
+                'start': '2018-11-02 13:00:00',
+                'end': '2018-11-02 13:03:00',
+                'category': 'screened_full'
+            }]).to_csv(source, index=False)
+            Path(str(source) + '.checkpoint.json').write_text(
+                checkpoint.read_text())
+            name = 'full_analysis_synthetic_existing'
+            event_path = folder / (name + '_events.csv')
+            audit_path = folder / (name + '_audit.csv')
+            registry_path = folder / (name + '_registry.csv')
+            pd.DataFrame([strong]).to_csv(event_path, index=False)
+            pd.DataFrame([{
+                'seed_utc': '2018-11-02 13:00:00',
+                'error': '',
+                'missing_background_days': ''
+            }]).to_csv(audit_path, index=False)
+            pd.DataFrame([{
+                'event_id': strong['event_id']
+            }]).to_csv(registry_path, index=False)
+            with patch(__name__ + '._archive_strong_then_cleanup') as finalize:
+                finalize_existing_full_analysis(
+                    Namespace(windows_csv=source, reference='local'),
+                    ArgumentParser())
+                finalize.assert_called_once()
     print('PASS: native magnetic metrics, 1s event segmentation, '
           'stable IDs, strict strong selection, archives and safe cleanup')
 
@@ -1097,10 +1139,13 @@ def _strong_reader_scan_bounds(candidate_csv):
         raise RuntimeError('Reader scan incomplete; cannot remove raw data')
     elapsed = (end - first).total_seconds()
     fraction = int(data['valid_seconds']) / elapsed
+    if not (0 < fraction <= 1.001):
+        raise RuntimeError('Invalid reader coverage; raw CDFs retained')
     if fraction < .9:
-        raise RuntimeError(
-            f'Only {fraction:.1%} of the scan has valid 1-second coverage; '
-            'raw CDFs retained for follow-up')
+        print(f'[COVERAGE NOTE] {fraction:.1%} of requested UTC seconds have '
+              'valid vectors. Missing NASA measurements are NOT quiet '
+              'solar wind; preserving the available strong candidates.',
+              flush=True)
     return first, end
 
 
@@ -1216,14 +1261,23 @@ def _archive_strong_then_cleanup(unique, audit, args, prefix,
                                  output, registry_output):
     """Archive strong events, verify files, THEN remove scoped local CDFs.
 
-    Fail closed: incomplete reader run, any analysis error or missing
-    background, or archive corruption prevents all raw CDF deletion.
+    Fail closed: incomplete reader run, analysis errors or archive
+    corruption prevent all raw CDF deletion. Known NASA telemetry gaps
+    are recorded, never misclassified as quiet intervals.
     """
     start, end = _strong_reader_scan_bounds(args.windows_csv)
-    if any(row['error'] for row in audit):
+    if any(str(row.get('error', '')).strip() not in ('', 'nan')
+           for row in audit):
         raise RuntimeError('Analysis had errors; raw files left untouched')
-    if any(row.get('missing_background_days') for row in audit):
-        raise RuntimeError('Missing magnetic background; raw files retained')
+    missing_context_windows = sum(
+        bool(str(row.get('missing_background_days', '')).strip())
+        and str(row.get('missing_background_days', '')).lower() != 'nan'
+        for row in audit)
+    if missing_context_windows:
+        print(f'[COVERAGE NOTE] {missing_context_windows} reader windows '
+              'have unavailable adjacent background days; only directly '
+              'measured, complete and strong events will be archived.',
+              flush=True)
 
     strong = [event for event in unique if _is_strong_switchback(event)]
     if not output.is_file() or not registry_output.is_file():
@@ -1288,6 +1342,12 @@ def _archive_strong_then_cleanup(unique, audit, args, prefix,
                   'AND not censored AND native_valid_samples>0',
         total_magnetic_rotations=len(unique),
         strong_events_retained=len(strong),
+        windows_with_missing_adjacent_background=missing_context_windows,
+        observed_scan_fraction=round(
+            int(json.loads(Path(
+                str(args.windows_csv) + '.checkpoint.json'
+            ).read_text(encoding='utf-8'))['valid_seconds']) /
+            (end - start).total_seconds(), 6),
         native_event_padding_minutes=5,
         archives_csv=str(archive_index),
         strong_events_csv=str(strong_table),
@@ -1318,6 +1378,66 @@ def _archive_strong_then_cleanup(unique, audit, args, prefix,
           f'({size_bytes/1073741824:.2f} GiB)', flush=True)
     print(f'[STRONG OUTPUT] {strong_table}; {strong_registry}; '
           f'{archive_index}; {manifest_file}', flush=True)
+
+
+
+def finalize_existing_full_analysis(args, parser):
+    """Archive from saved completed analysis without repeating 866 windows.
+
+    Reuses the same checked retention logic as a fresh full analysis. A
+    complete reader manifest, event registry, and one audit row per input
+    candidate are mandatory; never silently treat failed windows as quiet.
+    """
+    if args.windows_csv is None or not args.windows_csv.is_file():
+        parser.error('Existing reader --windows-csv is required')
+    if args.reference != 'local':
+        parser.error('--finalize-existing only supports local reference')
+    _strong_reader_scan_bounds(args.windows_csv)
+    name = re.sub(r'[^A-Za-z0-9_-]+', '_', args.windows_csv.stem)
+    prefix = f'full_analysis_{name}'
+    events_path = DATA / (prefix + '_events.csv')
+    audit_path = DATA / (prefix + '_audit.csv')
+    registry_path = DATA / (prefix + '_registry.csv')
+    required = (events_path, audit_path, registry_path)
+    for path in required:
+        if not path.is_file():
+            raise RuntimeError(
+                f'Missing completed analysis file {path}; refusing cleanup')
+
+    seeds = pd.read_csv(args.windows_csv).sort_values(
+        'start').reset_index(drop=True)
+    records = pd.read_csv(events_path)
+    # Empty error strings must remain empty, NOT float(NaN).
+    audit = pd.read_csv(audit_path, keep_default_na=False)
+    registry = pd.read_csv(registry_path)
+    required_events = {
+        'event_id', 'native_peak_deflection_deg', 'radial_reversal',
+        'median_abs_Bmag_deviation_pct_approx', 'native_valid_samples',
+        'left_censored', 'right_censored', 'event_start_utc',
+        'event_end_utc'
+    }
+    if not required_events.issubset(records.columns):
+        raise RuntimeError('Existing events file has missing physics columns')
+    if len(audit) != len(seeds):
+        raise RuntimeError('Audit does not cover every reader window')
+    if not {'seed_utc', 'error'}.issubset(audit.columns):
+        raise RuntimeError('Missing required audit fields')
+    if audit['seed_utc'].astype(str).tolist() != (
+            seeds['start'].astype(str).tolist()):
+        raise RuntimeError('Audit and reader windows are misaligned')
+    if audit['error'].astype(str).str.strip().ne('').any():
+        raise RuntimeError('Some reader windows failed; raw CDFs retained')
+    if records['event_id'].duplicated().any():
+        raise RuntimeError('Event catalog contains duplicate IDs')
+    if len(registry) != len(records) or (
+            set(registry['event_id']) != set(records['event_id'])):
+        raise RuntimeError('Event registry and event table are inconsistent')
+    print(f'[FINALIZE EXISTING] Verified {len(audit)} analyzed windows, '
+          f'{len(records)} magnetic events. No reanalysis needed.',
+          flush=True)
+    _archive_strong_then_cleanup(
+        records.to_dict('records'), audit.to_dict('records'), args,
+        prefix, events_path, registry_path)
 
 
 def run_full_analysis(args, parser):
@@ -1425,6 +1545,9 @@ def main():
     p.add_argument('--keep-strong-only',action='store_true',
                    help='After complete full analysis, archive ONLY strong '
                         'magnetic events and delete safely scoped raw CDF cache')
+    p.add_argument('--finalize-existing', action='store_true',
+                   help='Use already-saved full-analysis events/audit/registry '
+                        'and archive/clean without repeating the analysis')
     p.add_argument('--position-source',choices=('cached-spc','spc','none'),
                    default='cached-spc',
                    help='Spacecraft HCI position: use cached SPC (default), '
@@ -1446,13 +1569,20 @@ def main():
         p.error('--position-source is only available with --mode full')
     if a.mode == 'legacy' and a.keep_strong_only:
         p.error('--keep-strong-only requires --mode full')
+    if a.finalize_existing and not a.keep_strong_only:
+        p.error('--finalize-existing requires --keep-strong-only')
+    if a.finalize_existing and a.mode != 'full':
+        p.error('--finalize-existing requires --mode full')
     if a.keep_strong_only and (a.candidate_index is not None or
                                a.top not in (None, 0)):
         p.error('--keep-strong-only requires all candidate rows (no --top or --candidate-index)')
     if a.top is None:
         a.top = 0 if a.mode == 'full' else 8
     if a.mode == 'full':
-        run_full_analysis(a, p)
+        if a.finalize_existing:
+            finalize_existing_full_analysis(a, p)
+        else:
+            run_full_analysis(a, p)
         return
     # Default candidates are stored here; a separate file is optional.
     if a.windows_csv is None:

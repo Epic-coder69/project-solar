@@ -48,11 +48,11 @@ These are **magnetic candidates, not 599 physically confirmed switchbacks**. Mis
 
 The strong-candidate screen requires a native-cadence peak deflection of at least **90°**, a radial-field reversal, a median absolute magnetic-magnitude deviation of at most **10%** from the chosen reference, uncensored event boundaries, and valid native measurements. These are **operational selection criteria**, not independent physical verification.
 
-The associated data products were generated on the research computer under the Git-ignored \`data/\` directory. They are **not stored in this GitHub repository**.
+The associated data products were generated on the research computer under the Git-ignored `data/` directory. They are **not stored in this GitHub repository**.
 
 ## How the research pipeline fits together
 
-\`\`\`text
+```text
 Parker Solar Probe observations
            |
            +-- FIELDS MAG, RTN magnetic vectors
@@ -85,13 +85,13 @@ Parker Solar Probe observations
                     Matched timing, controls, uncertainties,
                     time lags, energy/species dependence,
                     and scientific interpretation
-\`\`\`
+```
 
-**Common data requirements:** preserve UTC timing, each instrument's actual integration interval/cadence, detector and channel metadata, units, valid-data masks, coverage, provenance, and stable magnetic \`event_id\` values. A missing observation is not a zero particle rate.
+**Common data requirements:** preserve UTC timing, each instrument's actual integration interval/cadence, detector and channel metadata, units, valid-data masks, coverage, provenance, and stable magnetic `event_id` values. A missing observation is not a zero particle rate.
 
 ## Repository structure
 
-\`\`\`text
+```text
 Project Solar/
 ├── README.md
 ├── The_Research.md
@@ -103,7 +103,7 @@ Project Solar/
     └── IS_O_IS/
         ├── particle_data_reader.py
         └── particle_data_analysis.py
-\`\`\`
+```
 
 - **FIELDS reader:** obtains full-cadence MAG data and screens magnetic investigation windows, with progress reporting and daily checkpoints.
 - **FIELDS analysis:** evaluates magnetic rotations, writes event/audit/registry CSVs, selects strong magnetic candidates, and optionally archives verified data before cleaning scoped original-CDF caches.
@@ -116,22 +116,22 @@ The old experimental work is preserved on the [pre-cleanup archive branch](https
 
 Run commands from the **project root**. Python 3.10+ recommended:
 
-\`\`\`bash
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r code/M_FIELD/external_libraries_requirements.txt
-\`\`\`
+```
 
-All NASA CDF downloads, candidate tables, retained archives, and intermediate measurements belong in **\`data/\`**, which is excluded from Git. Back up that directory separately.
+All NASA CDF downloads, candidate tables, retained archives, and intermediate measurements belong in **`data/`**, which is excluded from Git. Back up that directory separately.
 
 ### Self-tests (no NASA downloads)
 
-\`\`\`bash
+```bash
 python code/M_FIELD/magnetic_data_reader.py --self-test
 python code/M_FIELD/magnetic_data_analysis.py --self-test
 python code/IS_O_IS/particle_data_reader.py --self-test
 python code/IS_O_IS/particle_data_analysis.py --self-test
-\`\`\`
+```
 
 Passing synthetic tests does **not** prove that the physics, instrument calibrations, real-data coverage, or cross-instrument correlations are correct.
 
@@ -139,22 +139,22 @@ Passing synthetic tests does **not** prove that the physics, instrument calibrat
 
 A short screening example:
 
-\`\`\`bash
+```bash
 python code/M_FIELD/magnetic_data_reader.py --scan \
   --start 2018-11-07T03:30:00 --duration 10m \
   --output data/example_magnetic_candidates.csv
-\`\`\`
+```
 
 The reader saves screened **investigation windows**, not confirmed physical events. For a completed reader scan:
 
-\`\`\`bash
+```bash
 python code/M_FIELD/magnetic_data_analysis.py \
   --windows-csv data/example_magnetic_candidates.csv --no-plots
-\`\`\`
+```
 
 The completed two-month study used:
 
-\`\`\`bash
+```bash
 python code/M_FIELD/magnetic_data_reader.py --scan \
   --start 2018-11-01 --duration 2mo \
   --output data/nov_dec_2018_candidates.csv
@@ -162,13 +162,13 @@ python code/M_FIELD/magnetic_data_reader.py --scan \
 python code/M_FIELD/magnetic_data_analysis.py \
   --windows-csv data/nov_dec_2018_candidates.csv \
   --no-plots --keep-strong-only
-\`\`\`
+```
 
 **Do not rerun the two-month scan simply to inspect the existing results.** It may download large volumes of NASA data. The already-produced catalogs should be used for subsequent particle comparisons.
 
 Key local outputs are:
 
-\`\`\`text
+```text
 data/nov_dec_2018_candidates.csv
 data/full_analysis_nov_dec_2018_candidates_events.csv
 data/full_analysis_nov_dec_2018_candidates_audit.csv
@@ -178,35 +178,35 @@ data/full_analysis_nov_dec_2018_candidates_strong_registry.csv
 data/full_analysis_nov_dec_2018_candidates_strong_archive_index.csv
 data/full_analysis_nov_dec_2018_candidates_strong_retention.json
 data/full_analysis_nov_dec_2018_candidates_strong_archive/
-\`\`\`
+```
 
-The high-resolution archives retain quality-screened magnetic vectors and context; they are **not bit-for-bit replacements for NASA's original CDFs and full instrument metadata**. The opt-in \`--keep-strong-only\` option can delete eligible local raw CDFs **only after** completed-scan, audit, and archive verification; missing NASA telemetry alone does not veto a verified run. Use \`--finalize-existing\` with the other required flags to complete archival from an already-finished analysis without repeating computation.
+The high-resolution archives retain quality-screened magnetic vectors and context; they are **not bit-for-bit replacements for NASA's original CDFs and full instrument metadata**. The opt-in `--keep-strong-only` option can delete eligible local raw CDFs **only after** completed-scan, audit, and archive verification; missing NASA telemetry alone does not veto a verified run. Use `--finalize-existing` with the other required flags to complete archival from an already-finished analysis without repeating computation.
 
 ## ISʘIS: initial exploratory survey workflow
 
 First inspect the variables and metadata in an existing **summary** CDF:
 
-\`\`\`bash
+```bash
 python code/IS_O_IS/particle_data_reader.py \
   --inspect path/to/psp_isois_l2-summary_20181106_v26.cdf
-\`\`\`
+```
 
 For a one-day survey download and extraction:
 
-\`\`\`bash
+```bash
 python code/IS_O_IS/particle_data_reader.py \
   --download --start 2018-11-06 --end 2018-11-07 \
   --output data/isois/summary_rates_20181106.csv
-\`\`\`
+```
 
 Then run the **event-centered survey comparison** against the previously retained FIELDS strong-event catalog:
 
-\`\`\`bash
+```bash
 python code/IS_O_IS/particle_data_analysis.py \
   --rates-csv data/isois/summary_rates_20181106.csv \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --output data/isois/fields_event_particle_survey.csv
-\`\`\`
+```
 
 With only one day of particle data, **most FIELDS events will correctly have insufficient particle coverage**. The analysis writes per-event/per-rate-channel pre/during/post estimates and explicitly flags inadequate exposure; it does not claim a statistical correlation.
 

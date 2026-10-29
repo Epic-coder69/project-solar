@@ -13,9 +13,9 @@ physical event classifier. Event segmentation is still under investigation.
 | Path | Purpose |
 |---|---|
 | [The_Research.md](The_Research.md) | Research question, methodology and results |
-| `code/external_libraries_requirements.txt` | Required Python packages |
-| `code/magnetic_data_reader.py` | Read full-cadence FIELDS data and pre-screen arbitrary UTC time intervals; retains lower-cadence readers |
-| `code/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
+| `code/M_FIELD/external_libraries_requirements.txt` | Required Python packages |
+| `code/M_FIELD/magnetic_data_reader.py` | Read full-cadence FIELDS data and pre-screen arbitrary UTC time intervals; retains lower-cadence readers |
+| `code/M_FIELD/magnetic_data_analysis.py` | Candidate switchback detector; local or exploratory SPC reference |
 | `results/` | Small set of retained detector catalogs and final validation summary |
 | `figures/` | Illustrations and figures used in the research document |
 
@@ -31,7 +31,7 @@ Run the following commands from the repository root. Python 3.10+ recommended.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r code/external_libraries_requirements.txt
+python -m pip install -r code/M_FIELD/external_libraries_requirements.txt
 ```
 
 Raw NASA CDF data belong in the git-ignored `data/` cache. The loaders use
@@ -41,8 +41,8 @@ can be large.
 ## Legacy FIELDS data access
 
 ```bash
-python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 1min
-python code/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 4cyc
+python code/M_FIELD/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 1min
+python code/M_FIELD/magnetic_data_reader.py --start 2018-11-06 --days 1 --resolution 4cyc
 ```
 
 Legacy products are available using `get_day(day, resolution="1min")`
@@ -80,23 +80,23 @@ already running must be restarted to pick up a newer version of the script.
 Run synthetic tests without NASA downloads:
 
 ```bash
-python code/magnetic_data_reader.py --self-test
+python code/M_FIELD/magnetic_data_reader.py --self-test
 ```
 
 Request any UTC interval in a single command:
 
 ```bash
 # Ten minutes
-python code/magnetic_data_reader.py --scan --start 2018-11-07T03:30:00 --duration 10m
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-07T03:30:00 --duration 10m
 
 # Two weeks
-python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 2w
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-01 --duration 2w
 
 # Three calendar months
-python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 3mo
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-01 --duration 3mo
 
 # Exact start and exclusive end
-python code/magnetic_data_reader.py --scan --start 2018-11-06T12:00:00 --end 2018-11-06T15:00:00
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-06T12:00:00 --end 2018-11-06T15:00:00
 ```
 
 Output goes into a **single candidate CSV** under data/ for the
@@ -107,10 +107,10 @@ candidate windows for resuming an interrupted scan:
 
 ```bash
 # Start a month-long scan; inspect its CSV while the program continues
-python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo
 
 # If interrupted by Ctrl+C, continue from the last completed day
-python code/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo --resume
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-01 --duration 1mo --resume
 ```
 
 The same start/end range and --output path must be used when resuming.
@@ -165,15 +165,15 @@ the normal event/registry/audit CSVs and then:
 
 ```bash
 # First verify synthetic tests (no NASA downloads)
-python code/magnetic_data_analysis.py --self-test
+python code/M_FIELD/magnetic_data_analysis.py --self-test
 
 # Scan two months (2018-11-01 to 2019-01-01 UTC)
-python code/magnetic_data_reader.py --scan --start 2018-11-01 \
+python code/M_FIELD/magnetic_data_reader.py --scan --start 2018-11-01 \
   --duration 2mo --output data/nov_dec_2018_candidates.csv
 
 # Analyze all reader candidates; KEEP ONLY strong high-cadence archives;
 # automatically clean eligible original CDFs after the full run succeeds.
-python code/magnetic_data_analysis.py \
+python code/M_FIELD/magnetic_data_analysis.py \
   --windows-csv data/nov_dec_2018_candidates.csv \
   --no-plots --keep-strong-only
 ```
@@ -183,7 +183,7 @@ reader and analysis have already saved their complete candidate, event,
 audit and registry CSVs, but strong archival or cleanup was blocked, run:
 
 ```bash
-python code/magnetic_data_analysis.py \
+python code/M_FIELD/magnetic_data_analysis.py \
   --windows-csv data/nov_dec_2018_candidates.csv \
   --no-plots --keep-strong-only --finalize-existing
 ```
@@ -218,16 +218,16 @@ option is opt-in because it removes local cached CDF files.
 
 ```bash
 # Synthetic tests for both full-cadence and legacy logic (no downloads)
-python code/magnetic_data_analysis.py --self-test
+python code/M_FIELD/magnetic_data_analysis.py --self-test
 
 # First try one targeted candidate (CSV row 11), without plotting
-python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots
+python code/M_FIELD/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots
 
 # Optional: retrieve SPC position files when they're not already cached
-python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots --position-source spc
+python code/M_FIELD/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv --candidate-index 11 --no-plots --position-source spc
 
 # Analyze all 20 Nov 2 investigation windows, with figures
-python code/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv
+python code/M_FIELD/magnetic_data_analysis.py --windows-csv data/november_02_candidates.csv
 ```
 
 The full pipeline uses the reader's `start,end,category` columns, plus
@@ -285,8 +285,8 @@ are reused, but processing large intervals can still be substantial.
 4-samples-per-cycle analysis remain available explicitly:
 
 ```bash
-python code/magnetic_data_analysis.py --mode legacy --top 1 --reference local --no-plots
-python code/magnetic_data_analysis.py --mode legacy --windows-csv data/survey_selected.csv --top 0
+python code/M_FIELD/magnetic_data_analysis.py --mode legacy --top 1 --reference local --no-plots
+python code/M_FIELD/magnetic_data_analysis.py --mode legacy --windows-csv data/survey_selected.csv --top 0
 ```
 
 The experimental `--reference parker-spc` option is **legacy only**.
@@ -305,7 +305,7 @@ Legacy results retain their previous `corrected_*` paths.
 - Physically confirmed switchbacks and robust event boundaries: **not yet**.
 - Energetic-particle correlation analysis with IS☉IS: **future work**.
 
-**Reproducibility notice:** The high-resolution loading function has been merged into `code/magnetic_data_reader.py`.
+**Reproducibility notice:** The high-resolution loading function has been merged into `code/M_FIELD/magnetic_data_reader.py`.
 The original local `switchback_survey.py` was not tracked in Git; thus
 reproduction of the original event catalogs still needs checking against
 actual NASA CDF data on the research Mac. The refactor was tested with

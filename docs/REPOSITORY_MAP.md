@@ -11,6 +11,7 @@ project-solar/
 ├── README.md                         # Short starting point
 ├── The_Research.md                   # Scientific questions and methodology
 ├── project.py                        # Stable ASCII CLI: test, coverage, readers
+├── cleanup_local.py                  # Preview-first cleanup of local legacy dirs/logs
 ├── .gitignore                        # Keeps large data, caches, venv out of Git
 ├── docs/
 │   ├── REPOSITORY_MAP.md             # This guide
@@ -26,7 +27,6 @@ project-solar/
     │   ├── particle_highres_reader.py # Native-cadence EPI-Hi CDF/NPZ pipeline
     │   ├── particle_coverage_audit.py # 1/10/60 s timing-coverage check
     │   ├── particle_multires_coverage.py # Same-channel fallback tier audit
-    │   └── .gitkeep
     └── SWEAP/
         └── sweap_data_reader.py      # Exploratory plasma-product inspector
 ```
@@ -56,6 +56,20 @@ When invoking individual files directly, use the **actual local** folder.
 Do **not** rename either folder while an extraction is running. If both
 spellings exist locally, inspect `git status` and file differences before
 deleting or consolidating anything.
+
+## Obsolete duplicate folders and disposable logs
+
+`code/M_FIELD/` and `code/IS_O_IS/` are **old local path names**
+from a previous Git rename. GitHub tracks the current code only under
+`code/FIELDS/` and `code/IS⊙IS/`. Git does not remove an old directory
+if ignored cache files or otherwise untracked files remain inside it.
+
+Use `python project.py cleanup` for a preview and
+`python project.py cleanup --apply` to delete byte-identical old files,
+their rebuildable caches, empty old directories, and the optional root
+`logs/` folder and root `*.log` files. Unique and changed files are
+preserved with an explanation. `data/` is **out of scope** and must
+remain backed up separately. Never substitute `git clean -fdx`.
 
 ## Data is local, not lost
 

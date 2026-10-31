@@ -700,6 +700,26 @@ def audit_event_archives(directory):
     print("[SWEAP COVERAGE AUDIT]", report, flush=True)
     return report
 
+
+def bundle_event_audit(directory):
+    """Share small event metadata and coverage audit, never huge native NPZs."""
+    from zipfile import ZipFile, ZIP_DEFLATED
+    archive = directory / "sweap_audit_bundle.zip"
+    samples = sorted(directory.glob("*/*.json"))
+    for name in ("event_manifest.csv", "summary.json",
+                 "coverage_audit.csv", "coverage_audit_summary.json"):
+        candidate = directory / name
+        if candidate.is_file():
+            samples.append(candidate)
+    if not samples:
+        raise FileNotFoundError(f"No event metadata to bundle under {directory}")
+    with ZipFile(archive, "w", compression=ZIP_DEFLATED, compresslevel=6) as zipped:
+        for source in samples:
+            zipped.write(source, arcname=source.relative_to(directory))
+    print(f"[SWEAP AUDIT BUNDLE] {archive} ({len(samples)} metadata files)", flush=True)
+    return archive
+
+
 def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10, support_seconds=120):
     """Read exact FIELDS half-open event intervals, with optional UTC flanks."""
     import hashlib
@@ -1296,6 +1316,8 @@ def event_self_test():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")
+    p.add_argument("--bundle-audit", action="store_true",
+                   help="Zip all SWEAP event JSON and coverage reports for sharing (no large NPZ data)")
     p.add_argument("--audit-events", action="store_true",
                    help="Audit saved SWEAP event JSON for event EPOCH counts and variable omissions")
     p.add_argument("--extract-events", action="store_true",
@@ -1353,7 +1375,11 @@ def main():
         if args.extract_events or args.survey:
             p.error("--audit-events cannot be combined with extract/survey")
         audit_event_archives(args.event_out)
+        if args.bundle_audit:
+            bundle_event_audit(args.event_out)
         return
+    if args.bundle_audit:
+        p.error("--bundle-audit must be combined with --audit-events")
     if args.extract_events:
         if args.survey:
             p.error("Choose --survey or --extract-events, not both")

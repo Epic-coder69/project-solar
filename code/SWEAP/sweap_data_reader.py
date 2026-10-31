@@ -742,7 +742,7 @@ def split_utc_days(begin, stop):
 
 def native_event_slice(cdf, begin, stop, max_variable_mib=0,
                        event_start=None, event_end=None,
-                       before_seconds=10, after_seconds=10):
+                       before_seconds=10, after_seconds=10, product=None):
     """Extract native CDF records from all variables with provable time axes.
 
     Preserves multidimensional arrays, detector flags and fill values.
@@ -864,6 +864,51 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
             result["variables"][name] = {
                 "status": "read_error", "reason": f"{type(exc).__name__}: {exc}"}
             result["errors"][name] = f"{type(exc).__name__}: {exc}"
+    # SPC L2 stores EPOCH at the start of the spectrum, not each bin's
+    # measurement time. MEASUREMENT_TIME supplies each voltage step offset
+    # in TT2000 nanoseconds. Convert both to a derived UTC nanosecond matrix.
+    # The original CDF epoch/offset arrays remain unmodified in the NPZ.
+    if product == "spc-l2i":
+        epoch_name = next((n for n in arrays if n.lower() == "epoch"), None)
+        offset_name = next((n for n in arrays if n.lower() == "measurement_time"), None)
+        step_report = {"status": "unavailable", "reason": "Epoch or MEASUREMENT_TIME absent"}
+        if epoch_name and offset_name and epoch_name in selections:
+            offsets = np.asarray(arrays[offset_name])
+            utc_times = timestamps[epoch_name][selections[epoch_name]]
+            if (np.issubdtype(offsets.dtype, np.number) and offsets.ndim == 2
+                    and offsets.shape[0] == len(utc_times)):
+                offsets_float = offsets.astype(np.float64)
+                # Unphysical delays and CDF fills are excluded, not converted
+                # to real event times. Keep raw offsets for independent review.
+                valid_offsets = np.isfinite(offsets_float) & (offsets_float >= 0) & (
+                    offsets_float < 300_000_000_000)
+                clean_offsets = np.where(valid_offsets, offsets_float, 0)
+                measured = (utc_times.as_unit("ns").asi8[:, None] +
+                            np.rint(clean_offsets).astype(np.int64))
+                measured[~valid_offsets] = np.iinfo(np.int64).min
+                arrays["derived_SPC_step_UTC_ns"] = measured
+                measured_utc = pd.to_datetime(
+                    measured[valid_offsets], unit="ns", utc=True)
+                step_report = {
+                    "status": "derived", "source_epoch": epoch_name,
+                    "offset_variable": offset_name, "offset_units": "ns",
+                    "derived_variable": "derived_SPC_step_UTC_ns",
+                    "derived_units": "Unix UTC nanoseconds",
+                    "invalid_step_timestamp_sentinel": int(np.iinfo(np.int64).min),
+                    "valid_step_count": int(valid_offsets.sum()),
+                    "steps_during_event": int(np.sum(
+                        (measured_utc >= event_start) & (measured_utc < event_end))),
+                    "steps_immediate_pre": int(np.sum(
+                        (measured_utc >= event_start - pd.Timedelta(seconds=before_seconds))
+                        & (measured_utc < event_start))),
+                    "steps_immediate_post": int(np.sum(
+                        (measured_utc >= event_end) & (
+                            measured_utc < event_end + pd.Timedelta(seconds=after_seconds)))),
+                    "note": "Times are step timestamps, NOT a claim about step integration duration."}
+            else:
+                step_report = {"status": "unavailable",
+                               "reason": "Inconsistent or nonnumeric MEASUREMENT_TIME dimensions"}
+        result["spc_l2_per_voltage_step_timing"] = step_report
     result["saved_variables"] = sum(v["status"] == "saved"
                                     for v in result["variables"].values())
     result["not_saved_variables"] = len(names) - result["saved_variables"]
@@ -1026,7 +1071,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                             cdflib.CDF(str(src["path"])), begin, end, max_variable_mib,
                             event_start=event["event_start_utc"],
                             event_end=event["event_end_exclusive_utc"],
-                            before_seconds=before_seconds, after_seconds=after_seconds)
+                            before_seconds=before_seconds, after_seconds=after_seconds,
+                            product=product)
                         row["saved_variables"] = report["saved_variables"]
                         primary = next((n for n in report["time_axes"] if n.lower() == "epoch"),
                                        next(iter(report["time_axes"])))
@@ -1038,6 +1084,9 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                         row["records_outer_support"] = (phases["outer_support_before"]
                                                         + phases["outer_support_after"])
                         row["complete_variable_extraction"] = report["complete_variable_extraction"]
+                        if product == "spc-l2i":
+                            row["spc_steps_during_event"] = report.get(
+                                "spc_l2_per_voltage_step_timing", {}).get("steps_during_event")
                         row["status"] = ("saved" if report["any_records_in_window"]
                                          else "no_epoch_records")
                         row["not_saved_variables"] = report["not_saved_variables"]

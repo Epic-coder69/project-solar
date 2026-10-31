@@ -119,7 +119,6 @@ sampled numeric values, measured EPOCH spacing, and quality-flag variable
 names. Missing days, unavailable products, oversized downloads, and errors
 are reported explicitly rather than interpreted as zeros. It is a **survey**,
 not a validated quality/coverage audit of the 599 switchback candidates.
-See [detailed SWEAP workflow](docs/WORKFLOWS.md#sweap-inspect-nasa-plasma-measurements-and-actual-cadence).
 
 ## Repository guide
 
@@ -129,9 +128,6 @@ project-solar/
 ├── README.md                     # Current overview (this file)
 ├── The_Research.md               # Scientific objectives and research notes
 ├── .gitignore                    # Keeps NASA CDFs, caches and outputs local
-├── docs/
-│   ├── REPOSITORY_MAP.md         # Every script, ownership, local datasets
-│   └── WORKFLOWS.md              # Preserved long-form technical walkthrough
 └── code/
     ├── FIELDS/                   # Magnetic-field data and event detection
     ├── IS⊙IS/                    # Particle readers and coverage audits
@@ -142,8 +138,6 @@ The instrument folder is literally `code/IS⊙IS/` on GitHub. Older local
 commands using `code/IS_O_IS/` refer to the **previous folder name**.
 Prefer `project.py` so older path examples do not break again.
 
-- [Repository map and local data policy](docs/REPOSITORY_MAP.md)
-- [Detailed acquisition and analysis workflows](docs/WORKFLOWS.md)
 - [Research objectives and scientific background](The_Research.md)
 
 ## Data preservation and reproducibility

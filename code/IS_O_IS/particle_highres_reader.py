@@ -635,6 +635,14 @@ def self_test():
                            validator=lambda p: None, sleeper=lambda _: None)
         assert result.read_bytes() == b'fresh'  # ignores Range: clean restart
 
+    assert _remote_index(
+        'psp_isois-epihi_l2-let1-rates3600_20181206_v26.cdf',
+        'let1-rates3600')['20181206'].endswith('_v26.cdf')
+    assert _remote_index(
+        'psp_isois-epihi_l2-het-rates3600_20181206_v26.cdf',
+        'het-rates3600')['20181206'].endswith('_v26.cdf')
+    assert FILE_RE.fullmatch(
+        'psp_isois-epihi_l2-let1-rates3600_20181206_v26.cdf')
     assert _remote_index('psp_isois-epihi_l2-het-rates10_20181106_v2.cdf '
                          'psp_isois-epihi_l2-het-rates10_20181106_v26.cdf',
                          'het-rates10')['20181106'].endswith('_v26.cdf')

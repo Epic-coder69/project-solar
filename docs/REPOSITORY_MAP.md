@@ -27,7 +27,8 @@ project-solar/
     │   ├── particle_coverage_audit.py # 1/10/60 s timing-coverage check
     │   ├── particle_multires_coverage.py # Same-channel fallback tier audit
     └── SWEAP/
-        └── sweap_data_reader.py      # Exploratory plasma-product inspector
+        ├── sweap_data_reader.py      # Plasma CDF reader and 8-family survey CLI
+        └── sweap_family_survey.py    # 13-product CDF metadata and native-value preview
 ```
 
 **Path warning:** the GitHub directory is literally `code/IS⊙IS/` (Unicode

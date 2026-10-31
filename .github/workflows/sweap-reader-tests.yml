@@ -37,5 +37,10 @@ jobs:
         run: |
           python project.py sweap --list-products | tee /tmp/sweap-products.txt
           test "$(wc -l < /tmp/sweap-products.txt)" -eq 13
+      - name: Check event-extraction CLI
+        run: |
+          python project.py sweap --help > /tmp/sweap-help.txt
+          grep -q -- '--extract-events' /tmp/sweap-help.txt
+          grep -q -- '--events-csv' /tmp/sweap-help.txt
       - name: Check CLI
         run: python project.py sweap --help

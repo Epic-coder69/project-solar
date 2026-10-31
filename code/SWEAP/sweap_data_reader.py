@@ -723,12 +723,19 @@ def audit_native_quality(item):
 
 def audit_event_archives(directory):
     """Summarize genuine event-time EPOCHs and variables actually retained."""
+    # Only per-product source metadata belong in the base 13-product audit.
+    # source_recovery/source_comparison.json is NOT an event or measurement.
     metadata = sorted(directory.glob("*/*.json"))
+    metadata = [p for p in metadata if p.parent.name in CATALOG]
     rows = []
     for path in metadata:
         try:
             item = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            continue
+        if (item.get("product") not in CATALOG or not item.get("event_id")
+                or not item.get("event_start_utc")
+                or not isinstance(item.get("variable_details"), dict)):
             continue
         timing = item.get("variable_details", {}).get("time_axes", {})
         primary = next((x for x in timing if x.lower() == "epoch"), None)
@@ -810,7 +817,8 @@ def bundle_event_audit(directory):
     """Share small event metadata and coverage audit, never huge native NPZs."""
     from zipfile import ZipFile, ZIP_DEFLATED
     archive = directory / "sweap_audit_bundle.zip"
-    samples = sorted(directory.glob("*/*.json"))
+    samples = sorted(p for p in directory.glob("*/*.json")
+                     if p.parent.name in CATALOG)
     for name in ("event_manifest.csv", "summary.json",
                  "coverage_audit.csv", "coverage_audit_summary.json"):
         candidate = directory / name
@@ -819,6 +827,8 @@ def bundle_event_audit(directory):
     for recovered in (directory / "source_recovery").rglob("*.json"):
         if recovered.is_file():
             samples.append(recovered)
+    # Include each metadata path at most once, even when glob patterns overlap.
+    samples = sorted(set(samples))
     if not samples:
         raise FileNotFoundError(f"No event metadata to bundle under {directory}")
     with ZipFile(archive, "w", compression=ZIP_DEFLATED, compresslevel=6) as zipped:
@@ -970,7 +980,7 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
     manifest = out_dir / "event_manifest.csv"
     if not manifest.is_file():
         raise FileNotFoundError(f"Extract the event first: {manifest}")
-    frame = pd.read_csv(manifest).fillna("")
+    frame = pd.read_csv(manifest, dtype=str, keep_default_na=False)
     if max_segments:
         frame = frame.iloc[:max_segments]
     budget = [int(max_total_mib * 1048576)]

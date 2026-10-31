@@ -43,7 +43,10 @@ def utc(value):
 def cadence(times):
     """Actual adjacent EPOCH differences; NOT physical integration time."""
     a = pd.DatetimeIndex(times).dropna().sort_values()
-    diffs = np.diff(a.asi8) / 1e9
+    # Pandas 3 can preserve datetime64[s]/[ms]/[us] resolution. .asi8
+    # reports values in that unit, not necessarily nanoseconds. Normalize
+    # explicitly before converting adjacent EPOCH differences to seconds.
+    diffs = np.diff(a.as_unit("ns").asi8) / 1e9
     positive = diffs[diffs > 0]
     return {"records": len(a), "duplicate_epochs": int(np.sum(diffs == 0)),
             "median_s": float(np.median(positive)) if len(positive) else None,
@@ -208,8 +211,16 @@ def test():
     data = np.array([5.0, -1e31, 6.0])
     assert valid(data, {"FILLVAL": -1e31}).tolist() == [True, False, True]
     times = pd.date_range("2018-11-06T00:00:00Z", periods=9, freq="1s").delete([3, 4])
-    assert cadence(times)["largest_gap_s"] == 3.0
-    assert cadence(times)["median_s"] == 1.0
+    # Test mixed timestamp storage units: pandas 3 may use datetime64[s]
+    # while CDF epochs generally arrive with micro/nanosecond resolution.
+    for unit in ("s", "ms", "us", "ns"):
+        got = cadence(times.as_unit(unit))
+        assert got["largest_gap_s"] == 3.0, (unit, got)
+        assert got["median_s"] == 1.0, (unit, got)
+        assert got["records"] == 7, (unit, got)
+    nanos = pd.DatetimeIndex(["2018-11-06T00:00:00.000000001Z",
+                              "2018-11-06T00:00:00.873820033Z"])
+    assert abs(cadence(nanos)["median_s"] - 0.873820032) < 1e-8
     assert utc("2018-11-06T00:00:00").tzinfo is not None
     print("PASS: offline fill-value, cadence, gap, and UTC checks")
 

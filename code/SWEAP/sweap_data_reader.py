@@ -1412,6 +1412,9 @@ def event_self_test():
             audited = audit_event_archives(target)
             assert audited["segments_with_during_epoch"] == 1
             assert audited["segments_with_skipped_variables"] == 1
+            assert audited["event_native_quality_by_product"]["spc-l3i"]["status"] == "audited"
+            assert audited["event_native_quality_by_product"]["spc-l3i"]["unflagged_zero"] == 4
+            assert audited["segments_with_unflagged_zero"] == 1
     print("PASS: SWEAP event UTC windows, 120s context, grouped subsets, "
           "3D native arrays, fill masks, SPC nanosecond step times, "
           "metadata audit, NPZ/manifest and resume")

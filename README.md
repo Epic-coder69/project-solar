@@ -156,6 +156,41 @@ high-resolution sample. Five-minute heavy-ion count rates are separate
 composition/time-context measurements; they do not reconstruct missing
 1–10-second proton or electron observations.
 
+### Graph IS⊙IS measurements during FIELDS switchbacks
+
+The unified analyzer now creates **native-value PNG plots** (no additional
+Python scripts) with event start/end shaded. Each panel shows an independent
+particle channel and a **single source product**. Horizontal line segments
+cover the *actual integration interval* for each rate or differential-flux
+value. Invalid/fill bins and missing data remain gaps; no interpolation,
+cross-product averaging, flag interpretation or acceleration inference occurs.
+
+From your activated project environment (plots require optional Matplotlib):
+
+```bash
+python -m pip install matplotlib
+python project.py isois-analyzer --self-test
+python project.py isois-analyzer plot-events --max-events 4
+```
+
+The first four plots prioritize switchbacks with fine HET proton coverage, if
+the saved coverage report is present. PNGs and a provenance JSON summary are
+written to `data/isois/plots/`. No NASA files are fetched, and the source
+data in `data/` are not overwritten.
+
+To plot a particular FIELDS switchback or different source channels:
+
+```bash
+python project.py isois-analyzer plot-events --list-events
+python project.py isois-analyzer plot-events --event-id EVENT_ID --channels LET1_A_H HET_A_H HET_A_Electrons LET1_R26A_CNO
+python project.py isois-analyzer plot-events --max-events 3 --energy-index 1 --sector-index 0
+```
+
+Energy and sector indices select one source-native bin; the analyzer never
+silently sums unrelated energy bins or telescope directions. Hourly data are
+labelled as such and must not be interpreted as switchback-scale variation.
+See `python project.py isois-analyzer plot-events --help`.
+
 ## SWEAP reader (one file)
 
 All SWEAP discovery, acquisition, single-product inspection and preliminary

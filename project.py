@@ -54,6 +54,7 @@ def help_text() -> None:
   python project.py isois-reader list-products
   python project.py isois-reader epihi --help EPI-Hi products/cadences
   python project.py isois-analyzer plot-events --max-events 4  Plot IS⊙IS values during switchbacks
+  python project.py isois-analyzer plot-events --all-events   Plot all catalog switchbacks
   python project.py isois-analyzer coverage   Recalculate multires timing coverage
   python project.py highres --help            Legacy EPI-Hi command (still works)
   python project.py particles --help          Legacy hourly survey command

@@ -561,7 +561,6 @@ CHANNELS = {
         'second-rates': ('LET1_A_H_Rate',),
         'let1-rates10': ('A_H_Flux', 'A_H_Rate'),
         'let1-rates60': ('A_H_Flux', 'A_H_Rate'),
-        'let1-rates300': ('A_H_Flux', 'A_H_Rate'),
         'let1-rates3600': ('A_H_Flux', 'A_H_Rate'),
         'summary': ('A_H_Rate_TS',),
     },
@@ -569,7 +568,6 @@ CHANNELS = {
         'second-rates': ('HET_A_H_Rate',),
         'het-rates10': ('A_H_Flux', 'A_H_Rate'),
         'het-rates60': ('A_H_Flux', 'A_H_Rate'),
-        'het-rates300': ('A_H_Flux', 'A_H_Rate'),
         'het-rates3600': ('A_H_Flux', 'A_H_Rate'),
         'summary': ('HET_A_H_Rate_TS',),
     },
@@ -577,7 +575,6 @@ CHANNELS = {
         'second-rates': ('HET_A_Electrons_Rate',),
         'het-rates10': ('A_Electrons_Flux', 'A_Electrons_Rate'),
         'het-rates60': ('A_Electrons_Flux', 'A_Electrons_Rate'),
-        'het-rates300': ('A_Electrons_Flux', 'A_Electrons_Rate'),
         'het-rates3600': ('A_Electrons_Flux', 'A_Electrons_Rate'),
         'summary': ('HET_A_Electrons_Rate_TS',),
     },
@@ -585,6 +582,18 @@ CHANNELS = {
     'LET1_A_Heavy_Z6_28': {
         'summary': ('A_Heavy_Rate_TS',),
     },
+    # Five-minute L2 sectored rates provide distinct HEAVY-ION GROUPS.
+    # They are NOT the summary's combined Z=6..28 rate; preserve their
+    # telescope, range (R1/R26), side (A) and grouping identity.
+    'LET1_R1A_CNO': {'let1-rates300': ('R1A_CNO_SECT_Rate',)},
+    'LET1_R1A_NetoSi': {'let1-rates300': ('R1A_NetoSi_SECT_Rate',)},
+    'LET1_R1A_FeGroup': {'let1-rates300': ('R1A_FeGroup_SECT_Rate',)},
+    'LET1_R26A_CNO': {'let1-rates300': ('R26A_CNO_SECT_Rate',)},
+    'LET1_R26A_NetoSi': {'let1-rates300': ('R26A_NetoSi_SECT_Rate',)},
+    'LET1_R26A_FeGroup': {'let1-rates300': ('R26A_FeGroup_SECT_Rate',)},
+    'HET_A_CNO': {'het-rates300': ('A_CNO_SECT_Rate',)},
+    'HET_A_NetoSi': {'het-rates300': ('A_NetoSi_SECT_Rate',)},
+    'HET_A_FeGroup': {'het-rates300': ('A_FeGroup_SECT_Rate',)},
 }
 HIGHR_PRODUCTS = tuple(sorted({
     product for options in CHANNELS.values()
@@ -886,6 +895,35 @@ def _multires_self_test():
                             summary['LET1_A_H'][1], source='summary',
                             variable='A_H_Rate_TS', expected_cadence=3600)
         assert fallback['coverage_tier'] == 'hourly_background_only'
+    # A 300s CNO observation is a separate channel and must never
+    # replace a proton spectrum or the combined summary Z6-28 group.
+    with TemporaryDirectory() as folder:
+        root = Path(folder)
+        p = root / 'let1-rates300'
+        p.mkdir()
+        path = p/'psp_isois-epihi_l2-let1-rates300_20181106_v26.npz'
+        np.savez_compressed(
+            path,
+            integration_start_utc_ns=np.asarray([start-50*NS]),
+            integration_end_utc_ns=np.asarray([start+250*NS]),
+            R26A_CNO_SECT_Rate=np.ones((1,2,25)))
+        Path(str(path)+'.manifest.json').write_text(
+            json.dumps({'output_sha256': _sha256(path), 'variables': {
+                'R26A_CNO_SECT_Rate': {'units':'s^-1'}
+            }}))
+        inv = _inventory(root, HIGHR_PRODUCTS)
+        rates, sources, failed = evaluate(windows, inv, {}, verify_sha=True)
+        assert not failed
+        assert len(sources) == 1
+        assert set(rates['channel']) == {'LET1_R26A_CNO'}
+        assert rates.iloc[0]['product'] == 'let1-rates300'
+        assert rates.iloc[0]['measurement_units_type'] == 'counts_per_second'
+        assert rates.iloc[0]['coverage_tier'] == 'coarse_partial_context'
+        best = choose_best(windows, rates)
+        assert best[(best.event_id=='a') &
+                    (best.channel=='LET1_A_Heavy_Z6_28')].iloc[0]['best_tier'] == 'no_observation'
+        assert best[(best.event_id=='a') &
+                    (best.channel=='LET1_A_H')].iloc[0]['best_tier'] == 'no_observation'
     with TemporaryDirectory() as folder:
         root = Path(folder)
         p = root/'let1-rates3600'
@@ -977,8 +1015,10 @@ def _multires_main(argv=None):
         'channel_energy_spectra_verified_compatible': False,
         'particle_counts_statistically_adequate': None,
         'heavy_ion_warning': (
-            'LET1 heavy Z6-28 summary group cannot be replaced as same '
-            'channel by separate LET1 elemental or grouped heavy-ion flux.'
+            'LET1 summary heavy Z6-28 rate and 5-minute LET1/HET sectored '
+            'CNO/NetoSi/FeGroup count rates have DIFFERENT species groups, '
+            'energy selections and viewing geometry. Never merge them as '
+            'equivalent calibrated differential flux.'
         ),
     }
     output = args.output_dir/'multires_coverage_summary.json'

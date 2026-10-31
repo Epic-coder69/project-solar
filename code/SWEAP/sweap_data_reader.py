@@ -585,7 +585,115 @@ def self_test():
 
 # --- FIELDS-driven native SWEAP event extraction --------------------------
 
-def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10):
+
+EVENT_EXTRACTOR_VERSION = "native_sweap_v2_context_quality_audit"
+
+def cdf_json(value):
+    """Represent standard CDF metadata scalars/arrays in JSON."""
+    if isinstance(value, dict):
+        return {str(k): cdf_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [cdf_json(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return cdf_json(value.tolist())
+    if isinstance(value, np.generic):
+        return cdf_json(value.item())
+    if isinstance(value, (pd.Timestamp, date)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, float) and not np.isfinite(value):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+def count_valid_native(values, attrs):
+    """Non-destructive validity counts, not a replacement for quality flags."""
+    a = np.asarray(values)
+    if not np.issubdtype(a.dtype, np.number):
+        return None
+    good = np.isfinite(a)
+    for name, comparison in (
+        ("FILLVAL", "ne"), ("VALIDMIN", "ge"), ("VALIDMAX", "le")):
+        if name not in attrs:
+            continue
+        try:
+            bound = np.asarray(attrs[name], dtype=float)
+            if comparison == "ne":
+                good &= a != bound
+            elif comparison == "ge":
+                good &= a >= bound
+            else:
+                good &= a <= bound
+        except (TypeError, ValueError):
+            pass
+    return {"total_elements": int(a.size),
+            "not_fill_and_in_valid_range": int(good.sum()),
+            "nonfinite_or_fill_or_out_of_range": int((~good).sum()),
+            "rows_with_any_valid_element": int(
+                good.reshape((len(a), -1)).any(axis=1).sum())
+            if a.ndim and len(a) else None}
+
+def epoch_phase_counts(times, event_start, event_end, before_seconds, after_seconds):
+    """Classify EPOCH tags, not integration intervals."""
+    start, stop = utc(event_start), utc(event_end)
+    pre = start - pd.Timedelta(seconds=before_seconds)
+    post = stop + pd.Timedelta(seconds=after_seconds)
+    return {
+        "during_event": int(np.sum((times >= start) & (times < stop))),
+        "immediate_pre": int(np.sum((times >= pre) & (times < start))),
+        "immediate_post": int(np.sum((times >= stop) & (times < post))),
+        "outer_support_before": int(np.sum(times < pre)),
+        "outer_support_after": int(np.sum(times >= post))}
+
+def audit_event_archives(directory):
+    """Summarize genuine event-time EPOCHs and variables actually retained."""
+    metadata = sorted(directory.glob("*/*.json"))
+    rows = []
+    for path in metadata:
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        timing = item.get("variable_details", {}).get("time_axes", {})
+        primary = next((x for x in timing if x.lower() == "epoch"), None)
+        counts = timing.get(primary, {}).get("phase_counts", {}) if primary else {}
+        rows.append({
+            "event_id": item.get("event_id"), "product": item.get("product"),
+            "status": item.get("status"),
+            "during_epoch": counts.get("during_event"),
+            "immediate_pre_epoch": counts.get("immediate_pre"),
+            "immediate_post_epoch": counts.get("immediate_post"),
+            "support_before_epoch": counts.get("outer_support_before"),
+            "support_after_epoch": counts.get("outer_support_after"),
+            "saved_variables": item.get("saved_variables"),
+            "not_saved_variables": item.get("not_saved_variables"),
+            "read_errors": item.get("read_errors"),
+            "source": item.get("source_file"),
+            "extractor_version": item.get("extractor_version")})
+    if not rows:
+        raise FileNotFoundError(f"No SWEAP product metadata JSON found under {directory}")
+    table = pd.DataFrame(rows)
+    table.to_csv(directory / "coverage_audit.csv", index=False)
+    report = {
+        "product_segments": len(table),
+        "events": int(table.event_id.nunique()),
+        "status_counts": table.status.value_counts().to_dict(),
+        "segments_with_during_epoch": int((table.during_epoch.fillna(0) > 0).sum()),
+        "segments_with_zero_during_epoch": int((table.during_epoch.fillna(0) == 0).sum()),
+        "segments_with_skipped_variables": int((table.not_saved_variables.fillna(0) > 0).sum()),
+        "segments_with_read_errors": int((table.read_errors.fillna(0) > 0).sum()),
+        "notes": [
+            "EPOCH tag counts are not exposure-overlap counts.",
+            "A nonzero EPOCH count is not a science-quality approval.",
+            "Refer to per-event product JSON for exact variables and NASA caveats."]}
+    (directory / "coverage_audit_summary.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print("[SWEAP COVERAGE AUDIT]", report, flush=True)
+    return report
+
+def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10, support_seconds=120):
     """Read exact FIELDS half-open event intervals, with optional UTC flanks."""
     import hashlib
     frame = pd.read_csv(path, dtype={"event_id": str})
@@ -608,15 +716,18 @@ def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10
             raise ValueError(f"FIELDS event row {i}: exclusive end must follow start")
         event_id = (str(row["event_id"]) if "event_id" in frame
                     and pd.notna(row["event_id"]) else f"row_{i+1}")
-        begin = start - pd.Timedelta(seconds=before_seconds)
-        stop = end + pd.Timedelta(seconds=after_seconds)
+        begin = start - pd.Timedelta(seconds=before_seconds + support_seconds)
+        stop = end + pd.Timedelta(seconds=after_seconds + support_seconds)
         # No user-provided event ID appears in output paths (path traversal safe).
         key = hashlib.sha256(f"{event_id}|{start.isoformat()}|{end.isoformat()}".encode()).hexdigest()[:16]
         result.append({"event_id": event_id, "event_key": key,
                        "event_start_utc": start.isoformat(),
                        "event_end_exclusive_utc": end.isoformat(),
                        "window_start_utc": begin.isoformat(),
-                       "window_end_exclusive_utc": stop.isoformat()})
+                       "window_end_exclusive_utc": stop.isoformat(),
+                       "before_seconds": float(before_seconds),
+                       "after_seconds": float(after_seconds),
+                       "support_seconds": float(support_seconds)})
     return result
 
 
@@ -629,7 +740,9 @@ def split_utc_days(begin, stop):
         a = next_stop
 
 
-def native_event_slice(cdf, begin, stop, max_variable_mib=128):
+def native_event_slice(cdf, begin, stop, max_variable_mib=0,
+                       event_start=None, event_end=None,
+                       before_seconds=10, after_seconds=10):
     """Extract native CDF records from all variables with provable time axes.
 
     Preserves multidimensional arrays, detector flags and fill values.
@@ -653,9 +766,13 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=128):
         raise ValueError("CDF has no readable UTC Epoch/Epoch* axis")
     result = {"source_variable_count": len(names), "variables": {}, "errors": {},
               "time_axes": {}, "unassigned_record_varying": [],
-              "full_native_arrays": True}
+              "full_native_arrays": True, "extractor_version": EVENT_EXTRACTOR_VERSION,
+              "metadata": {"global_attributes": cdf_json(cdf.globalattsget())
+                           if hasattr(cdf, "globalattsget") else {}}}
     selections = {}
     left, right = utc(begin), utc(stop)
+    event_start = utc(event_start) if event_start is not None else left
+    event_end = utc(event_end) if event_end is not None else right
     for name, times in timestamps.items():
         ids = np.flatnonzero((times >= left) & (times < right))
         selections[name] = ids
@@ -666,9 +783,12 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=128):
             "median_epoch_step_s": float(np.median(spacing)) if len(spacing) else None,
             "max_epoch_gap_s": float(np.max(spacing)) if len(spacing) else None,
             "first_utc": times[ids[0]].isoformat() if len(ids) else None,
-            "last_utc": times[ids[-1]].isoformat() if len(ids) else None}
+            "last_utc": times[ids[-1]].isoformat() if len(ids) else None,
+            "phase_counts": epoch_phase_counts(times[ids], event_start,
+                                                event_end, before_seconds,
+                                                after_seconds)}
     arrays = {}
-    max_bytes = int(max_variable_mib * 1048576)
+    max_bytes = int(max_variable_mib * 1048576) if max_variable_mib else None
     for name in names:
         try:
             var = cdf.varinq(name)
@@ -713,7 +833,7 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=128):
                 slab = slab[(rowids - lo).astype(int)]
             else:
                 slab = np.asarray(cdf.varget(name))
-            if slab.nbytes > max_bytes:
+            if max_bytes is not None and slab.nbytes > max_bytes:
                 result["variables"][name] = {
                     "status": "skipped_variable_size_limit",
                     "bytes": int(slab.nbytes), "max_bytes": max_bytes}
@@ -734,7 +854,12 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=128):
                 "units": str(attrs.get("UNITS", "")),
                 "catdesc": str(attrs.get("CATDESC", ""))[:200],
                 "fillval": str(attrs.get("FILLVAL", "")),
-                "bytes": int(slab.nbytes)}
+                "bytes": int(slab.nbytes),
+                "validity_summary": count_valid_native(slab, attrs),
+                "attributes": cdf_json(attrs),
+                "cdf_data_type": str(getattr(var, "Data_Type_Description",
+                                               getattr(var, "Data_Type", ""))),
+                "cdf_record_dimensions": list(getattr(var, "Dim_Sizes", []))}
         except (ValueError, OSError, TypeError, IndexError, AttributeError) as exc:
             result["variables"][name] = {
                 "status": "read_error", "reason": f"{type(exc).__name__}: {exc}"}
@@ -743,6 +868,12 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=128):
                                     for v in result["variables"].values())
     result["not_saved_variables"] = len(names) - result["saved_variables"]
     result["any_records_in_window"] = any(len(v) for v in selections.values())
+    result["unlimited_variable_size"] = max_bytes is None
+    result["saved_record_varying_variables"] = sum(
+        v.get("status") == "saved" and v.get("rec_vary", False)
+        for v in result["variables"].values())
+    result["complete_variable_extraction"] = (
+        result["not_saved_variables"] == 0 and not result["errors"])
     return result, arrays
 
 

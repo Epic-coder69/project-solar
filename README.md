@@ -341,6 +341,91 @@ Do not treat a sample overlapping a switchback as evidence of particle
 acceleration; check quality, count statistics, field-of-view, controls, and
 possible time delays. Original NASA CDFs and the FIELDS catalog are never deleted.
 
+## ISʘIS: multi-resolution SAME-channel recovery of missing coverage
+
+This is a **fallback inventory**, not numerical interpolation or a merged
+high-cadence flux time series. It ranks **measurements from the same
+telescope, A-side and particle species** at their recorded native
+integrations, without double-counting the same detections. It never
+substitutes HET protons for LET1 protons, helium for heavy ions, or B-side for
+A-side; it does not claim that rate and flux energy passbands are equivalent.
+
+**Known 2018 coverage**: our first EPI-Hi 1/10/60-second encounter archive
+gave 295/599 switchback candidates with nominal fine timing. The separate
+original 3600-second ISʘIS summary survey had overlapping integrations for
+597/599 events, but those are *hourly context*, not event-resolved counts.
+
+The reader now also recognizes native-cadence EPI-Hi
+\`let1-rates3600\` and \`het-rates3600\` archives, with optional intermediate
+\`let1-rates300\`, \`het-rates60\`, \`het-rates300\` and
+\`let2-rates60\`. The intermediate products are only used where their
+archived daily files and matching detector channels actually exist.
+
+First run the existing survey CSV through the multiresolution audit **without
+downloading anything**:
+
+\`\`\`bash
+python code/IS_O_IS/particle_multires_coverage.py --self-test
+
+python code/IS_O_IS/particle_multires_coverage.py \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --summary-csv data/isois/fields_event_summary_rates.csv
+\`\`\`
+
+Acquire the two genuine **hourly EPI-Hi L2 CDF products** as additional
+background information for the exact FIELDS event dates. This does **not**
+replace the existing high-resolution archives or summary CSV:
+
+\`\`\`bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --products let1-rates3600 het-rates3600 \
+  --download --resume --download-attempts 4
+\`\`\`
+
+Optionally test additional intermediate products if the official archive
+lists them during the relevant dates:
+
+\`\`\`bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --products let1-rates300 het-rates60 het-rates300 let2-rates60 \
+  --download --resume --download-attempts 4
+\`\`\`
+
+Re-run the multires audit after any download. It creates:
+
+- \`data/isois/highres/multires_best_per_event_channel.csv\`: each candidate
+  × each original particle channel, one preferred product/provenance selected
+  by *timing tier*, with counts of alternate overlapping source products
+- \`data/isois/highres/multires_observed_sources.csv\`: all recorded
+  channel-specific overlapping product/event alternatives, never summed
+- \`data/isois/highres/multires_source_inventory.csv\`: measured integration
+  durations and source-product coverage
+- \`data/isois/highres/multires_coverage_summary.json\`: aggregate coverage,
+  integrity issues and science caveats
+
+**Coverage-tier interpretation:** \`fine_event_and_flanks\` means nominal
+1–10-second timing during the event and in both ±10-second windows.
+\`fine_event_only\` means high-cadence event coverage without full flank
+coverage. \`coarse_event_scale\` is 60–300-second context with at least
+one complete integration inside the event, without resolving the 10-second
+flanks. \`hourly_background_only\` is a 3600-second observation, which
+cannot establish whether the particle rate changed during that particular
+switchback. \`no_observation\` means no matched measurement was found.
+All tiers refer to **time availability, not quality-approved physical data**.
+
+The combined heavy-ion \`A_Heavy_Rate_TS\` is a Z=6–28 group. The 60 s
+separately identified species and 300 s grouped elemental measurements are
+**not the same variable**; the multires preference deliberately does not
+claim they are calibrated replacements for the combined group. Their
+native-resolution CDFs remain available for a distinct composition analysis.
+
+All EPI-Hi products may have different energy passbands; no energy-bin
+remapping, summation or flux/rate conversion is carried out. Numeric
+validity masks and quality flags require separate instrument-specific
+evaluation, as do Poisson statistics and direction-dependent effects.
+
 ## ISʘIS: initial exploratory survey workflow
 
 First inspect the variables and metadata in an existing **summary** CDF:

@@ -1028,20 +1028,29 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
                     budget[0] -= used
                     found["status"] = outcome
                 status["original_download"] = {k: cdf_json(v)
-                                                for k,v in found.items()}
-                if found["status"] in ("cached", "downloaded"):
-                    result = write_recovered_source(
-                        found["path"], product, event, out_dir, "original_daily",
-                        expected=subset_variables)
-                    status["original_recovery"] = {
-                        "status": result["status"], "archive": result["archive"],
-                        "comparison": result["variable_inventory_comparison"],
-                        "saved_variable_names": [n for n,v in result["variables"].items()
-                                                  if v.get("status") == "saved"],
-                         "read_error_count": len(result["error_variables"])}
+                                                for k, v in found.items()}
             except (requests.RequestException, ValueError, OSError) as exc:
                 status["original_download"] = {
                     "status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+            else:
+                if found["status"] in ("cached", "downloaded"):
+                    try:
+                        result = write_recovered_source(
+                            found["path"], product, event, out_dir, "original_daily",
+                            expected=subset_variables)
+                        status["original_recovery"] = {
+                            "status": result["status"], "archive": result["archive"],
+                            "comparison": result["variable_inventory_comparison"],
+                            "saved_variable_names": [
+                                n for n, v in result["variables"].items()
+                                if v.get("status") == "saved"],
+                            "read_error_count": len(result["error_variables"]),
+                            "quality_audit": result.get("quality_audit")}
+                    except (ValueError, OSError, TypeError, IndexError) as exc:
+                        status["original_recovery"] = {
+                            "status": "error",
+                            "reason": f"{type(exc).__name__}: {exc}",
+                            "source_path": found.get("path")}
         # Attempt all variables in the NASA dataset catalog missing from the
         # saved time subset, not only a small hand-picked list. Eight variables
         # per request keeps NASA URLs manageable and isolates API failures.
@@ -1097,11 +1106,28 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
                     attempt["reason"] = f"{type(exc).__name__}: {exc}"
                 status["targeted_batches"].append(attempt)
         rows.append(status)
-        print(f"[SOURCE COMPARE] {product}: original="
-              f"{status.get('original_download', {}).get('status', 'not_requested')}; "
-              f"targeted batches={len(status.get('targeted_batches', []))}; "
-              f"catalog missing={status.get('catalog_missing_variable_count', 0)}",
+        orig = status.get("original_download", {})
+        recovered = status.get("original_recovery", {})
+        attempts = status.get("targeted_batches", [])
+        failures = [
+            str(a.get("reason") or a.get("download", {}).get("reason"))
+            for a in attempts if a.get("status") not in ("downloaded", "cached")
+        ]
+        print(f"[SOURCE COMPARE] {product}: catalog="
+              f"{inventories[product].get('status')} "
+              f"({inventories[product].get('variable_count', 0)} variables); "
+              f"original_download={orig.get('status', 'not_requested')}; "
+              f"original_extraction={recovered.get('status', 'not_run')}; "
+              f"original_additions={len(recovered.get('comparison', {}).get('original_only', []))}; "
+              f"targeted={len(attempts)} requests; "
+              f"targeted_success={sum(a.get('status') in ('downloaded', 'cached') for a in attempts)}",
               flush=True)
+        for phase, detail in (("download", orig), ("extraction", recovered)):
+            if detail.get("status") == "error":
+                print(f"[RECOVERY ERROR] {product} {phase}: {detail.get('reason')}",
+                      flush=True)
+        for reason in failures:
+            print(f"[TARGETED RECOVERY] {product}: {reason}", flush=True)
     folder = out_dir / "source_recovery"
     folder.mkdir(parents=True, exist_ok=True)
     report = {

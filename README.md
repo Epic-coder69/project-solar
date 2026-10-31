@@ -366,6 +366,47 @@ new data. The bundle can be re-created after a `git pull` without
 re-extracting the event:
 `python project.py sweap --audit-events --bundle-audit --event-out data/sweap/events_v2`.
 
+**NASA original-versus-subset recovery (first event):**
+The Nov 1, 2018 audit showed several key fields absent from the
+time-subset CDFs—not a failure of array extraction. To investigate
+whether they exist in the original daily NASA files, and to request
+all other variables advertised by the NASA dataset variable catalog
+that are missing from each saved subset, run:
+
+```bash
+git pull --ff-only origin main
+python project.py sweap --self-test
+python project.py sweap --recover-sources \
+  --event-out data/sweap/events_v2 \
+  --max-file-mib 1024 --max-total-mib 3072
+python project.py sweap --audit-events --bundle-audit \
+  --event-out data/sweap/events_v2
+```
+
+This reads the **existing** event manifest and only examines
+product/day segments whose initial data came from a NASA time subset.
+It first asks CDAS for the published variable catalog, attempts
+bounded downloads of the original daily CDF, then requests missing
+variables in batches of up to eight using NASA's native CDF API.
+When a source is unavailable or oversized it records that limitation.
+Recovered full original and targeted variable CDFs are archived as
+independent native NPZ arrays under `data/sweap/events_v2/source_recovery/`,
+with separately recorded metadata, variable comparisons and time-axis
+quality results. It does not overwrite or silently mix the already
+saved event archives. Results appear in
+`source_recovery/source_comparison.json`; the `--bundle-audit`
+option includes the new JSON reports but **not** the large scientific
+arrays or daily CDFs.
+
+`--recover-no-original` can be used to request only the smaller
+targeted variables and skip original daily downloads.
+`--recover-no-targeted` checks only original CDFs.
+`--recover-max-segments N` limits the number of subsets inspected.
+The default size budget for these recovery calls is still bounded
+by the supplied MiB caps; unlimited data cannot be guaranteed without
+available NASA products, adequate disk/network capacity and an
+instrument-specific quality audit.
+
 **Scientific caveats:** The 13 selected sources represent eight SWEAP
 measurement families, not every possible NASA mission dataset or
 unreleased raw Level 0/1 telemetry. L2 is calibrated detector data;

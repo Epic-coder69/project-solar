@@ -62,36 +62,58 @@ python project.py status
 On macOS, to open the existing folder in VS Code without installing its
 shell command: `open -a "Visual Studio Code" .`
 
-### Most useful commands
+### Unified IS⊙IS interfaces
+
+There are now **two primary particle commands**. They are *two user-facing
+entry points*, not a single monolithic 2,000-line parser: the tested legacy
+modules remain internal decoders and analysis backends.
+
+- `isois-reader` **ingests** official CDF files, preserves the original
+  detector, species, energy bins, native integration times, count/flux values,
+  quality flags and source metadata. The `epihi` and `summary` modes are
+  intentionally separate products behind the **same reader interface**.
+- `isois-analyzer` **analyzes existing local measurements**: event-resolved
+  coverage (`fine-coverage`), same-channel multi-resolution coverage
+  (`coverage`) and the exploratory hourly survey (`survey`). The
+  results keep the original CSV/JSON paths and schemas.
 
 ```bash
-# Run every offline instrument self-test (no NASA downloads)
+# Run all eight underlying offline instrument tests (no NASA downloads)
 python project.py test
 
-# Recalculate coverage from the data already saved locally
-python project.py coverage
+# Inspect the public interfaces
+python project.py isois-reader --help
+python project.py isois-reader list-products
+python project.py isois-analyzer --help
 
-# View all reader options (does not download anything)
-python project.py highres --help
-python project.py sweap --help
-
-# Inspect which SWEAP products the reader knows about
-python project.py sweap --list-products
-```
-
-For *intentional* new EPI-Hi hourly downloads to fill remaining source gaps,
-specify products and the event catalog explicitly:
-
-```bash
-python project.py highres \
+# Read EPI-Hi observations at their NATIVE resolutions
+python project.py isois-reader epihi \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --products let1-rates3600 het-rates3600 \
   --download --resume
+
+# Analyze the SAVED measurements, without redownloading any files
+python project.py isois-analyzer coverage
+python project.py isois-analyzer fine-coverage
+
+# View the SWEAP products (separate instrument suite)
+python project.py sweap --help
+python project.py sweap --list-products
 ```
 
-Commands after `python project.py` forward arguments to the existing
-instrument-specific scripts; they do **not** silently change detector
-measurements or integration times.
+Legacy aliases **continue to work unchanged**, including
+`python project.py highres ...`, `python project.py particles ...`,
+`python project.py coverage`, `python project.py fine-coverage ...` and
+`python project.py particle-analysis ...`. Direct invocations of the older
+particle Python scripts also still work. No cached NASA CDFs or NPZ products
+are moved, rewritten or deleted.
+
+**Scope:** this is a structural refactor, **not** a new particle-physics
+pipeline. The existing coverage reports measure nominal timestamp overlap;
+they do *not* newly interpret instrument quality flags or establish Poisson
+significance, energy-passband equivalence or particle acceleration. The
+previous 295/599 fine and 597/599 at-least-hourly figures remain the last
+verified user-run results until the analysis is rerun.
 
 ## SWEAP preliminary survey
 
@@ -151,7 +173,7 @@ project-solar/
 ├── .gitignore                    # Keeps NASA CDFs, caches and outputs local
 └── code/
     ├── FIELDS/                   # Magnetic-field data and event detection
-    ├── IS⊙IS/                    # Particle readers and coverage audits
+    ├── IS⊙IS/                    # isois_reader.py, isois_analyzer.py + internal backends
     └── SWEAP/                    # Exploratory plasma data inspection
 ```
 

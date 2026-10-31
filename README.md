@@ -236,7 +236,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --plan-only
 ```
 
-Run the native-cadence archive acquisition only **after** real CDF validation (default: 1 s rates-only quicklook, 10 s LET1, 60 s heavy ions and 10 s HET):
+Acquire all candidate-aligned CDFs at their native resolutions (default: 1 s rate-only quicklook, 10 s LET1, 60 s heavy ions and 10 s HET). This may involve many downloads:
 
 ```bash
 python code/IS_O_IS/particle_data_reader.py --highres \
@@ -251,6 +251,32 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --start 2018-11-06 --end 2018-11-07 \
   --products second-rates --download --resume
 ```
+
+### Interrupted downloads and safe re-runs
+
+The public ISʘIS archive may disconnect during a long multi-day download.
+The downloader now retries individual CDF transfers, preserves `.part` files
+and requests HTTP Range resumes when supported by the server; if Range is
+ignored it starts the file again instead of appending duplicates. Each
+successfully decoded product/day is saved *immediately*, and
+`data/isois/highres/index.json` is checkpointed throughout the run. It
+records `status: partial` or `status: complete`, plus missing and failed
+product-days. `--resume` validates the NPZ and manifest SHA-256 before reusing
+them; it does not require rerunning FIELDS.
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --self-test
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --download --resume --download-attempts 4
+```
+
+The code may finish with exit status 2 and an `[INCOMPLETE]` message if any
+source product-day is unavailable. This indicates an *explicit missing-data
+record*, not that all events were observed or that the downloaded partition
+files were lost. A later re-run with `--resume` retries missing or failed
+source days.
 
 The reader validates the known `*_Rate` variables and units, stores counts and
 count rates separately, and **refuses to reinterpret rates-only data as

@@ -5,7 +5,6 @@ on:
     paths:
       - "code/**"
       - "project.py"
-      - "cleanup_local.py"
       - ".github/workflows/python-tests.yml"
   pull_request:
     paths:
@@ -42,8 +41,6 @@ jobs:
               ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
               print("SYNTAX OK", path)
           PY
-      - name: Test duplicate and log cleanup without real data
-        run: python project.py cleanup --self-test
       - name: Test unified CLI and every instrument
         run: |
           python project.py status

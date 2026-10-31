@@ -647,6 +647,80 @@ def epoch_phase_counts(times, event_start, event_end, before_seconds, after_seco
         "outer_support_before": int(np.sum(times < pre)),
         "outer_support_after": int(np.sum(times >= post))}
 
+
+# Scientific observables promised by published product descriptions, but
+# sometimes absent from an individual NASA-generated subset or source file.
+# An absence is an explicit warning, not evidence that the native source has
+# the same omission or permission to synthesize the missing measurements.
+RECOMMENDED_SOURCE_VARIABLES = {
+    "spc-l2i": ("measurement_time", "mv_hi"),
+    "spa-electron-3d": ("THETA", "PHI", "QUALITY_FLAG"),
+    "spi-alpha-l2": ("THETA", "PHI"),
+}
+
+
+def audit_native_quality(item):
+    """Inspect saved native flags at FIELDS event EPOCHs, without changing data.
+
+    A zero integer flag is provisionally 'unflagged', not a guarantee that
+    viewing geometry, contamination or statistical quality is acceptable.
+    """
+    import cdflib
+
+    archive = Path(item.get("archive", ""))
+    if not archive.is_file():
+        return {"status": "archive_not_found", "reason": str(archive)}
+    try:
+        with np.load(archive, allow_pickle=False) as saved:
+            names = set(saved.files)
+            epoch_name = next((v for v in names if v.lower() == "epoch"), None)
+            if epoch_name is None:
+                return {"status": "missing_epoch"}
+            times = pd.DatetimeIndex(pd.to_datetime(
+                cdflib.cdfepoch.to_datetime(saved[epoch_name]), utc=True))
+            during = ((times >= utc(item["event_start_utc"])) &
+                      (times < utc(item["event_end_exclusive_utc"])))
+            flag_name = next((n for n in ("general_flag", "QUALITY_FLAG", "quality_flag", "DQF")
+                              if n in names), None)
+            if flag_name is None:
+                return {"status": "no_flag_in_product", "event_epoch_count": int(during.sum())}
+            flags = np.asarray(saved[flag_name])
+            if len(flags) != len(times):
+                return {"status": "quality_epoch_length_mismatch",
+                        "flag": flag_name, "records": int(len(flags)),
+                        "epoch_records": int(len(times))}
+            values = flags[during]
+            if not np.issubdtype(values.dtype, np.number):
+                return {"status": "quality_non_numeric", "flag": flag_name}
+            if values.ndim == 1:
+                finite = np.isfinite(values)
+                clean = finite & (values == 0)
+                bad = finite & (values != 0)
+                return {
+                    "status": "audited", "flag": flag_name,
+                    "event_epoch_count": int(len(values)),
+                    "unflagged_zero": int(clean.sum()),
+                    "flagged_nonzero": int(bad.sum()),
+                    "nonfinite": int((~finite).sum()),
+                    "unflagged_fraction": float(clean.mean()) if len(clean) else None,
+                    "distinct_flag_values": {
+                        str(v): int(n) for v, n in zip(*np.unique(values, return_counts=True))
+                    }}
+            # SPC DQF array [time, 32] is multidimensional; list nonzero
+            # counts per bit separately, rather than collapsing to a badness.
+            valid = np.isfinite(values)
+            nonzero = valid & (values != 0)
+            return {
+                "status": "audited_multidimensional", "flag": flag_name,
+                "event_epoch_count": int(len(values)),
+                "shape": list(values.shape),
+                "rows_with_any_nonzero_flag": int(nonzero.reshape((len(values), -1)).any(axis=1).sum()),
+                "flag_nonzero_count_per_component": nonzero.sum(axis=0).tolist(),
+                "nonfinite_elements": int((~valid).sum())}
+    except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+        return {"status": "quality_read_error", "reason": str(exc)}
+
+
 def audit_event_archives(directory):
     """Summarize genuine event-time EPOCHs and variables actually retained."""
     metadata = sorted(directory.glob("*/*.json"))
@@ -659,6 +733,10 @@ def audit_event_archives(directory):
         timing = item.get("variable_details", {}).get("time_axes", {})
         primary = next((x for x in timing if x.lower() == "epoch"), None)
         counts = timing.get(primary, {}).get("phase_counts", {}) if primary else {}
+        quality = audit_native_quality(item)
+        named = set(item.get("variable_details", {}).get("variables", {}))
+        missing = [v for v in RECOMMENDED_SOURCE_VARIABLES.get(item.get("product"), ())
+                   if v.lower() not in {n.lower() for n in named}]
         rows.append({
             "event_id": item.get("event_id"), "product": item.get("product"),
             "status": item.get("status"),
@@ -673,12 +751,24 @@ def audit_event_archives(directory):
             "science_variables_with_event_values": item.get("science_variables_with_event_values"),
             "all_numeric_variables_with_event_values": item.get("all_numeric_variables_with_event_values"),
             "spc_steps_during_event": item.get("spc_steps_during_event"),
+            "quality_flag_name": quality.get("flag"),
+            "quality_audit_status": quality.get("status"),
+            "event_unflagged_zero": quality.get("unflagged_zero"),
+            "event_flagged_nonzero": quality.get("flagged_nonzero"),
+            "event_quality_flag_fraction": quality.get("unflagged_fraction"),
+            "missing_recommended_source_variables": ";".join(missing),
+            "recommended_source_variable_gap_count": len(missing),
             "source": item.get("source_file"),
-            "extractor_version": item.get("extractor_version")})
+            "extractor_version": item.get("extractor_version"),
+            "native_flag_audit": quality})
     if not rows:
         raise FileNotFoundError(f"No SWEAP product metadata JSON found under {directory}")
     table = pd.DataFrame(rows)
-    table.to_csv(directory / "coverage_audit.csv", index=False)
+    # Native flag component counts and distinct values are serialized in JSON,
+    # while the CSV remains simple enough to read in any spreadsheet.
+    table.assign(native_flag_audit=table.native_flag_audit.apply(
+        lambda q: json.dumps(q, default=cdf_json))).to_csv(
+            directory / "coverage_audit.csv", index=False)
     report = {
         "product_segments": len(table),
         "events": int(table.event_id.nunique()),
@@ -691,9 +781,23 @@ def audit_event_archives(directory):
             (table.science_variables_with_event_values.fillna(0) > 0).sum()),
         "segments_with_any_nonfill_numeric_values_during_event": int(
             (table.all_numeric_variables_with_event_values.fillna(0) > 0).sum()),
+        "segments_with_missing_recommended_source_variables": int(
+            (table.recommended_source_variable_gap_count > 0).sum()),
+        "missing_source_variables_by_product": {
+            str(row["product"]): row["missing_recommended_source_variables"].split(";")
+            for _, row in table.iterrows() if row["recommended_source_variable_gap_count"] > 0
+        },
+        "event_native_quality_by_product": {
+            str(row["product"]): row["native_flag_audit"]
+            for _, row in table.iterrows()
+        },
+        "segments_with_unflagged_zero": int(
+            (table.event_unflagged_zero.fillna(0) > 0).sum()),
         "notes": [
             "EPOCH tag counts are not exposure-overlap counts.",
             "A nonzero EPOCH count is not a science-quality approval.",
+            "Zero quality flags are provisional only; apply instrument-specific flag/FOV definitions.",
+            "Missing recommended source variables may result from NASA subsets or product generation.",
             "Refer to per-event product JSON for exact variables and NASA caveats."]}
     (directory / "coverage_audit_summary.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8")

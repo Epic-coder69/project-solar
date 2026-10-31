@@ -671,6 +671,7 @@ def audit_event_archives(directory):
             "not_saved_variables": item.get("not_saved_variables"),
             "read_errors": item.get("read_errors"),
             "science_variables_with_event_values": item.get("science_variables_with_event_values"),
+            "all_numeric_variables_with_event_values": item.get("all_numeric_variables_with_event_values"),
             "spc_steps_during_event": item.get("spc_steps_during_event"),
             "source": item.get("source_file"),
             "extractor_version": item.get("extractor_version")})
@@ -688,6 +689,8 @@ def audit_event_archives(directory):
         "segments_with_read_errors": int((table.read_errors.fillna(0) > 0).sum()),
         "segments_with_valid_science_values_during_event": int(
             (table.science_variables_with_event_values.fillna(0) > 0).sum()),
+        "segments_with_any_nonfill_numeric_values_during_event": int(
+            (table.all_numeric_variables_with_event_values.fillna(0) > 0).sum()),
         "notes": [
             "EPOCH tag counts are not exposure-overlap counts.",
             "A nonzero EPOCH count is not a science-quality approval.",
@@ -930,6 +933,10 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
         for v in result["variables"].values())
     result["complete_variable_extraction"] = (
         result["not_saved_variables"] == 0 and not result["errors"])
+    result["numeric_time_varying_variables_with_event_values"] = sum(
+        v.get("status") == "saved" and v.get("rec_vary", False) and
+        (v.get("validity_during_event") or {}).get("not_fill_and_in_valid_range", 0) > 0
+        for v in result["variables"].values())
     result["numeric_science_variables_with_event_values"] = sum(
         v.get("status") == "saved" and
         str(v.get("cdf_variable_type", "")).lower() == "data" and
@@ -1071,6 +1078,7 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                                         "not_saved_variables": prior.get("not_saved_variables", 0),
                                         "complete_variable_extraction": prior.get("complete_variable_extraction", False),
                                         "science_variables_with_event_values": prior.get("science_variables_with_event_values", 0),
+                                        "all_numeric_variables_with_event_values": prior.get("all_numeric_variables_with_event_values", 0),
                                         "read_errors": prior.get("read_errors", 0)})
                             rows.append(row)
                             continue
@@ -1106,6 +1114,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                         row["complete_variable_extraction"] = report["complete_variable_extraction"]
                         row["science_variables_with_event_values"] = report[
                             "numeric_science_variables_with_event_values"]
+                        row["all_numeric_variables_with_event_values"] = report[
+                            "numeric_time_varying_variables_with_event_values"]
                         if product == "spc-l2i":
                             row["spc_steps_during_event"] = report.get(
                                 "spc_l2_per_voltage_step_timing", {}).get("steps_during_event")
@@ -1149,6 +1159,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
             r.get("complete_variable_extraction", False) for r in rows),
         "segments_with_valid_data_type_values_during_event": sum(
             r.get("science_variables_with_event_values", 0) > 0 for r in rows),
+        "segments_with_nonfill_numeric_values_during_event": sum(
+            r.get("all_numeric_variables_with_event_values", 0) > 0 for r in rows),
         "notes": [
             "Native CDF records and dimensions preserved without resampling.",
             "Epoch time within an event does not establish measurement exposure overlap.",

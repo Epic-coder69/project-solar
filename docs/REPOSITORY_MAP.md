@@ -6,7 +6,7 @@ changes to the research pipeline.
 
 ## Source of truth: what GitHub contains
 
-\`\`\`text
+```text
 project-solar/
 ├── README.md                         # Entry point and detailed workflows
 ├── The_Research.md                   # Scientific questions and methodology
@@ -25,48 +25,48 @@ project-solar/
     │   └── .gitkeep
     └── SWEAP/
         └── sweap_data_reader.py      # Exploratory plasma-product inspector
-\`\`\`
+```
 
-**Path warning:** the GitHub directory is literally \`code/IS⊙IS/\` (Unicode
-sun-dot). Earlier local terminal examples sometimes used \`code/IS_O_IS/\`,
+**Path warning:** the GitHub directory is literally `code/IS⊙IS/` (Unicode
+sun-dot). Earlier local terminal examples sometimes used `code/IS_O_IS/`,
 which is *not the same pathname*. Do not assume they are interchangeable or
 copy one over the other. Confirm the folder on your own computer first:
 
-\`\`\`bash
+```bash
 cd ~/Desktop/project-solar
 git status --short
 find code -maxdepth 2 -name 'particle_data_reader.py' -print
 git ls-files 'code/*/particle_data_reader.py'
-\`\`\`
+```
 
-For commands below replace \`code/IS⊙IS\` with your verified local folder
+For commands below replace `code/IS⊙IS` with your verified local folder
 only when necessary. Do **not** rename either folder while an extraction is
-running. If both spellings exist locally, inspect \`git status\` and file
+running. If both spellings exist locally, inspect `git status` and file
 differences before deleting or consolidating anything.
 
 ## Data is local, not lost
 
-The Git-ignored \`data/\` directory stores the FIELDS strong candidate catalog,
+The Git-ignored `data/` directory stores the FIELDS strong candidate catalog,
 its retention/checksum manifest, original NASA CDF files, cached EPI-Hi products,
-per-day NPZ partitions and coverage reports. A \`git pull\` updates **code
+per-day NPZ partitions and coverage reports. A `git pull` updates **code
 and tracked documentation**, not this scientific data. VS Code should display
-the local \`data/\` folder even if it is ignored by Git.
+the local `data/` folder even if it is ignored by Git.
 
 Important local-only inputs and outputs:
 
 | Path | Purpose |
 | --- | --- |
-| \`data/full_analysis_nov_dec_2018_candidates_strong_events.csv\` | 599 FIELDS strong magnetic candidates; event boundaries |
-| \`data/full_analysis_nov_dec_2018_candidates_strong_retention.json\` | Catalog retention / integrity manifest |
-| \`data/isois/fields_event_summary_rates.csv\` | Old hourly summary count-rate survey |
-| \`data/isois/highres/\` | EPI-Hi native-cadence NPZ partitions and provenance |
-| \`data/isois/highres/coverage_10s.csv\` | Fine-cadence nominal time-coverage rows |
-| \`data/isois/highres/multires_best_per_event_channel.csv\` | One preferred source per event and original channel |
-| \`data/isois/highres/multires_observed_sources.csv\` | Alternative overlapping sources, not summed |
-| \`data/isois/highres/multires_coverage_summary.json\` | Cross-cadence timing-tier counts and caveats |
+| `data/full_analysis_nov_dec_2018_candidates_strong_events.csv` | 599 FIELDS strong magnetic candidates; event boundaries |
+| `data/full_analysis_nov_dec_2018_candidates_strong_retention.json` | Catalog retention / integrity manifest |
+| `data/isois/fields_event_summary_rates.csv` | Old hourly summary count-rate survey |
+| `data/isois/highres/` | EPI-Hi native-cadence NPZ partitions and provenance |
+| `data/isois/highres/coverage_10s.csv` | Fine-cadence nominal time-coverage rows |
+| `data/isois/highres/multires_best_per_event_channel.csv` | One preferred source per event and original channel |
+| `data/isois/highres/multires_observed_sources.csv` | Alternative overlapping sources, not summed |
+| `data/isois/highres/multires_coverage_summary.json` | Cross-cadence timing-tier counts and caveats |
 
 A clean-looking GitHub file tree **does not imply the raw data are backed up**.
-Back up \`data/\` separately, including FIELDS strong-event manifests and
+Back up `data/` separately, including FIELDS strong-event manifests and
 downloaded CDF/NPZ files.
 
 ## Pipeline roles — what to run when
@@ -90,7 +90,7 @@ downloaded CDF/NPZ files.
 
 Activate your environment and use the real local instrument folder:
 
-\`\`\`bash
+```bash
 cd ~/Desktop/project-solar
 source .venv/bin/activate
 find code -maxdepth 2 -name 'particle_multires_coverage.py' -print
@@ -99,7 +99,7 @@ python 'code/IS⊙IS/particle_multires_coverage.py' --self-test
 python 'code/IS⊙IS/particle_multires_coverage.py' \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --summary-csv data/isois/fields_event_summary_rates.csv
-\`\`\`
+```
 
 These commands audit existing partitions and do not delete raw CDFs. Do not
 rerun the two-month FIELDS scan merely to regenerate particle coverage.
@@ -123,15 +123,15 @@ energy ranges and uncertainty propagation still require independent review.
 
 ## What a future structural refactor should do (not yet applied)
 
-- Choose **one portable ASCII package path** (e.g. \`code/isois/\`) after
+- Choose **one portable ASCII package path** (e.g. `code/isois/`) after
   reconciling the Unicode GitHub path with any local aliases.
 - Move reusable timing/CDF/manifest utilities into shared modules only after
   tests exist; maintain stable CLI wrappers during migration.
-- Move inline self-tests into \`tests/\` and run them on CI.
-- Keep the root README short; place per-instrument details under \`docs/\`.
+- Move inline self-tests into `tests/` and run them on CI.
+- Keep the root README short; place per-instrument details under `docs/`.
 - Version lightweight, reproducible *summaries* with explicit provenance when
   appropriate; keep CDFs, huge NPZ arrays and private working data out of Git.
 
-**Safety rule:** do not \`git clean -fdx\`, delete \`data/\`, or force-reset a
-working tree to fix presentation problems. Inspect \`git status\` and make a
+**Safety rule:** do not `git clean -fdx`, delete `data/`, or force-reset a
+working tree to fix presentation problems. Inspect `git status` and make a
 separate backup of local measurements before any folder rename.

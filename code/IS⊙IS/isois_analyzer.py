@@ -239,7 +239,7 @@ def _survey_main():
     parser.add_argument('--output', type=Path,
                         default=Path('data/isois/fields_event_particle_survey.csv'))
     args = parser.parse_args()
-    if args._survey_self_test:
+    if args.self_test:
         _survey_self_test()
         return
     if not args.rates_csv or not args.events_csv:
@@ -485,7 +485,7 @@ def _fine_main(argv=None):
     p.add_argument('--after-seconds', type=float, default=10)
     p.add_argument('--no-verify-sha', action='store_true')
     args = p.parse_args(argv)
-    if args._fine_self_test:
+    if args.self_test:
         _fine_self_test()
         return
     if not args.events_csv:
@@ -933,7 +933,7 @@ def _multires_main(argv=None):
     p.add_argument('--after-seconds', type=float, default=10)
     p.add_argument('--no-verify-sha', action='store_true')
     args = p.parse_args(argv)
-    if args._multires_self_test:
+    if args.self_test:
         _multires_self_test()
         return
     if not args.events_csv:

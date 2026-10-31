@@ -119,10 +119,15 @@ def _summary_sources(path):
         group = frame.loc[frame['variable'] == name]
         if group.empty:
             continue
-        start = pd.to_datetime(group['integration_start_utc'],
-                               utc=True, errors='raise').astype('int64').to_numpy()
-        end = pd.to_datetime(group['integration_end_utc'],
-                             utc=True, errors='raise').astype('int64').to_numpy()
+        # Pandas may parse ISO timestamps at microsecond resolution on some
+        # versions. Normalizing to ns is essential: FIELDS event bounds are ns.
+        # Without this, hourly measurements appear to have zero overlap.
+        start = pd.DatetimeIndex(
+            pd.to_datetime(group['integration_start_utc'], utc=True, errors='raise')
+        ).as_unit('ns').asi8.copy()
+        end = pd.DatetimeIndex(
+            pd.to_datetime(group['integration_end_utc'], utc=True, errors='raise')
+        ).as_unit('ns').asi8.copy()
         if np.any(end <= start):
             raise ValueError(f'{name}: summary integration end <= start')
         indices = np.lexsort((end, start))
@@ -345,6 +350,8 @@ def self_test():
             'valid_measurement': False,
         }]).to_csv(survey, index=False)
         summary, sh = _summary_sources(survey)
+        assert summary['LET1_A_H'][0][0] == _utc('2018-11-05T23:30:00Z').value
+        assert summary['LET1_A_H'][1][0] == _utc('2018-11-06T00:30:00Z').value
         assert sh == _sha256(survey)
         assert 'LET1_A_H' in summary
         assert 'HET_A_H' not in summary

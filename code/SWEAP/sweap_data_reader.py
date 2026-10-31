@@ -670,6 +670,8 @@ def audit_event_archives(directory):
             "saved_variables": item.get("saved_variables"),
             "not_saved_variables": item.get("not_saved_variables"),
             "read_errors": item.get("read_errors"),
+            "science_variables_with_event_values": item.get("science_variables_with_event_values"),
+            "spc_steps_during_event": item.get("spc_steps_during_event"),
             "source": item.get("source_file"),
             "extractor_version": item.get("extractor_version")})
     if not rows:
@@ -684,6 +686,8 @@ def audit_event_archives(directory):
         "segments_with_zero_during_epoch": int((table.during_epoch.fillna(0) == 0).sum()),
         "segments_with_skipped_variables": int((table.not_saved_variables.fillna(0) > 0).sum()),
         "segments_with_read_errors": int((table.read_errors.fillna(0) > 0).sum()),
+        "segments_with_valid_science_values_during_event": int(
+            (table.science_variables_with_event_values.fillna(0) > 0).sum()),
         "notes": [
             "EPOCH tag counts are not exposure-overlap counts.",
             "A nonzero EPOCH count is not a science-quality approval.",
@@ -846,6 +850,11 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
                     continue
                 slab = slab.astype(str)
             arrays[name] = slab
+            during_counts = None
+            if varying and np.issubdtype(slab.dtype, np.number):
+                source_times = timestamps[dep][rowids]
+                during = (source_times >= event_start) & (source_times < event_end)
+                during_counts = count_valid_native(slab[during], attrs)
             result["variables"][name] = {
                 "status": "saved", "rec_vary": varying,
                 "depend_0": dep if varying else None,
@@ -856,6 +865,8 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
                 "fillval": str(attrs.get("FILLVAL", "")),
                 "bytes": int(slab.nbytes),
                 "validity_summary": count_valid_native(slab, attrs),
+                "validity_during_event": during_counts,
+                "cdf_variable_type": str(attrs.get("VAR_TYPE", "unknown")),
                 "attributes": cdf_json(attrs),
                 "cdf_data_type": str(getattr(var, "Data_Type_Description",
                                                getattr(var, "Data_Type", ""))),
@@ -919,6 +930,11 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
         for v in result["variables"].values())
     result["complete_variable_extraction"] = (
         result["not_saved_variables"] == 0 and not result["errors"])
+    result["numeric_science_variables_with_event_values"] = sum(
+        v.get("status") == "saved" and
+        str(v.get("cdf_variable_type", "")).lower() == "data" and
+        (v.get("validity_during_event") or {}).get("not_fill_and_in_valid_range", 0) > 0
+        for v in result["variables"].values())
     return result, arrays
 
 
@@ -1043,6 +1059,9 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                                 and prior.get("window_start_utc") == event["window_start_utc"]
                                 and prior.get("window_end_exclusive_utc") == event["window_end_exclusive_utc"]
                                 and prior.get("unlimited_variable_size") == (max_variable_mib == 0)
+                                and prior.get("before_seconds") == float(before_seconds)
+                                and prior.get("after_seconds") == float(after_seconds)
+                                and prior.get("support_seconds") == float(support_seconds)
                                 and prior.get("source_file")
                                 and path.stat().st_size > 100):
                             row.update({"status": "resumed",
@@ -1051,6 +1070,7 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                                         "records_during_event": prior.get("records_during_event", 0),
                                         "not_saved_variables": prior.get("not_saved_variables", 0),
                                         "complete_variable_extraction": prior.get("complete_variable_extraction", False),
+                                        "science_variables_with_event_values": prior.get("science_variables_with_event_values", 0),
                                         "read_errors": prior.get("read_errors", 0)})
                             rows.append(row)
                             continue
@@ -1084,6 +1104,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                         row["records_outer_support"] = (phases["outer_support_before"]
                                                         + phases["outer_support_after"])
                         row["complete_variable_extraction"] = report["complete_variable_extraction"]
+                        row["science_variables_with_event_values"] = report[
+                            "numeric_science_variables_with_event_values"]
                         if product == "spc-l2i":
                             row["spc_steps_during_event"] = report.get(
                                 "spc_l2_per_voltage_step_timing", {}).get("steps_during_event")
@@ -1125,6 +1147,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
         "product_segments_with_during_epoch": sum(r.get("records_during_event", 0) > 0 for r in rows),
         "product_segments_with_complete_variable_extraction": sum(
             r.get("complete_variable_extraction", False) for r in rows),
+        "segments_with_valid_data_type_values_during_event": sum(
+            r.get("science_variables_with_event_values", 0) > 0 for r in rows),
         "notes": [
             "Native CDF records and dimensions preserved without resampling.",
             "Epoch time within an event does not establish measurement exposure overlap.",

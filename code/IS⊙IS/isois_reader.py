@@ -970,6 +970,14 @@ def _numeric_mask(a, attrs):
     return valid
 
 
+class NoScienceRecords(ValueError):
+    """CDF file exists but the requested physical measurement has no records.
+
+    Not a valid zero count, a flux calibration issue, or a reason to invent
+    an all-zero measurement. This is an explicit unavailable-data outcome.
+    """
+
+
 def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
     info = cdf.cdf_info()
     names = list(info.zVariables) + list(info.rVariables)
@@ -1063,6 +1071,22 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
         )
         sectored = [name for name in rate_names if re.fullmatch(pattern, name)]
         if not sectored:
+            # Some official HET 300s files have 288 nominal Epoch timestamps
+            # yet every science rate variable is a zero-record array.
+            # Distinguish this absence from genuinely malformed CDF data.
+            het_expected = {
+                f'{side}_{species}_SECT_Rate'
+                for side in ('A', 'B')
+                for species in ('CNO', 'FeGroup', 'NetoSi')
+            }
+            skipped = {entry['name'] for entry in skipped_empty}
+            if (product == 'het-rates300' and len(midpoint) > 0
+                    and het_expected.issubset(skipped)):
+                raise NoScienceRecords(
+                    f'{product}: {len(midpoint)} Epoch timestamps but all '
+                    'six HET heavy-ion rate arrays have zero records; '
+                    'no particles or event coverage can be inferred'
+                )
             raise ValueError(
                 f'{product} has no time-aligned 5-minute heavy-ion sectored '
                 f'count-rate arrays (available rate variables: {rate_names}; '
@@ -1692,7 +1716,7 @@ def _epihi_main(argv=None):
               flush=True)
         windows = merged_intervals(event_df)
         catalog_hash = _sha256(args.events_csv)
-    results, missing, failures = [], [], []
+    results, missing, failures, unavailable = [], [], [], []
 
     def checkpoint(*, complete=False):
         """Create an explicit partial manifest after every completed or failed day."""
@@ -1707,6 +1731,7 @@ def _epihi_main(argv=None):
             'files': results,
             'missing_source_product_days': missing,
             'failed_source_product_days': failures,
+            'unavailable_science_product_days': unavailable,
             'warning': ('Time coverage does not imply good particle statistics, '
                         'valid quality flags, or association with switchbacks. '
                         'One-second counts/rates are not energy-resolved flux.'),
@@ -1718,6 +1743,17 @@ def _epihi_main(argv=None):
                 path, product, args.output_dir, windows,
                 event_df, catalog_hash, args.resume
             )
+        except NoScienceRecords as exc:
+            # File is readable but physically empty. Track it separately from
+            # parser failures; never save an empty NPZ as a measurement.
+            unavailable.append({
+                'product': product, 'source_file': str(path),
+                'reason': str(exc),
+            })
+            print(f'[NO SCIENCE RECORDS] {product} {path.name}: {exc}',
+                  flush=True)
+            checkpoint()
+            return
         except (ValueError, OSError, KeyError, RuntimeError) as exc:
             record = {'product': product, 'source_file': str(path),
                       'error': f'{type(exc).__name__}: {exc}'}
@@ -1845,7 +1881,12 @@ def _epihi_main(argv=None):
     checkpoint(complete=complete)
     print(f'[SAVED] {len(results)} native-cadence partitions; '
           f'{len(missing)} missing; {len(failures)} failed; '
+          f'{len(unavailable)} no science records; '
           f'index: {args.output_dir / "index.json"}', flush=True)
+    if unavailable:
+        print('[UNAVAILABLE] These source CDFs contain zero-record science '
+              'channels. No artificial values were generated, and timing '
+              'coverage was not assigned to these channels.', flush=True)
     if not complete:
         print('[INCOMPLETE] Event windows with missing source products must not '
               'be interpreted as quiet solar wind. Re-run with --resume '

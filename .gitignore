@@ -17,3 +17,13 @@ results/*.json
 
 # Local execution logs
 logs/
+
+# Local editor settings and alternative Python virtual environments
+.venv-*/
+.vscode/
+.idea/
+
+# Never accidentally commit raw spacecraft science arrays outside data/
+*.cdf
+*.npz
+*.cdf.gz

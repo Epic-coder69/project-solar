@@ -298,8 +298,13 @@ def _process(path, product, output_dir, windows, event_df, catalog_hash, resume)
     }, sort_keys=True).encode()).hexdigest()
     if resume and dest.is_file() and manifest_file.is_file():
         manifest = json.loads(manifest_file.read_text())
-        if manifest.get('fingerprint') == fingerprint \
-                and manifest.get('output_sha256') == _sha256(dest):
+        coverage = manifest.get('coverage_csv')
+        coverage_ok = (not coverage or
+            (Path(coverage).is_file() and
+             manifest.get('coverage_sha256') == _sha256(coverage)))
+        if (manifest.get('fingerprint') == fingerprint
+                and manifest.get('output_sha256') == _sha256(dest)
+                and coverage_ok):
             return manifest, 'RESUME'
     cdf = cdflib.CDF(str(path))
     arrays, info = decode(cdf, windows)
@@ -315,6 +320,7 @@ def _process(path, product, output_dir, windows, event_df, catalog_hash, resume)
         'output_npz': str(dest), 'output_sha256': _sha256(dest),
         'fingerprint': fingerprint, 'events_sha256': catalog_hash,
         'coverage_csv': str(coverage_path) if coverage_path else None,
+        'coverage_sha256': _sha256(coverage_path) if coverage_path else None,
         'timestamp_unit': 'UTC Unix nanoseconds',
         'intervals': 'Epoch midpoint +/- DELTA_MINUS/PLUS',
         'channel_mapping': CHANNEL_GUIDE[product],

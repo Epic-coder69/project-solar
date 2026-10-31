@@ -188,6 +188,64 @@ data/full_analysis_nov_dec_2018_candidates_strong_archive/
 
 The high-resolution archives retain quality-screened magnetic vectors and context; they are **not bit-for-bit replacements for NASA's original CDFs and full instrument metadata**. The opt-in `--keep-strong-only` option can delete eligible local raw CDFs **only after** completed-scan, audit, and archive verification; missing NASA telemetry alone does not veto a verified run. Use `--finalize-existing` with the other required flags to complete archival from an already-finished analysis without repeating computation.
 
+## ISʘIS: native-cadence particle data for FIELDS events
+
+The **high-resolution** reader is separate from the hourly summary-survey mode.
+It retains native time integrations, energy bins, counts, differential flux,
+uncertainties, pointing/quality data, and all supported science-array dimensions
+in per-day compressed NPZ files. **It does not resample the particle data.**
+
+| Original summary channel | Higher-resolution source | Native cadence |
+| --- | --- | --- |
+| A_H_Rate_TS (LET1 protons) | LET1-RATES10 | 10 s |
+| A_Heavy_Rate_TS (Z 6–28 LET1 heavy-ion group) | LET1-RATES300 CNO/Ne–Si/Fe-group bins | 300 s; **not an identical derived quantity** |
+| HET_A_H_Rate_TS | HET-RATES10 | 10 s |
+| HET_A_Electrons_Rate_TS | HET-RATES10 | 10 s |
+
+`SECOND-RATES` can be selected explicitly for **1-second proton/electron quicklook**,
+but it has reduced energy-bin detail and is **not a substitute for the 10-second
+science products for quantitative studies**. Neither He nor heavy ion groups are
+interchangeable with the original Z=6–28 summary channel.
+
+Synthetic tests (no downloads):
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --highres --self-test
+```
+
+Read the **already downloaded** HET 10-second sample (preserving the raw CDF):
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --file data/isois/epihi/psp_isois-epihi_l2-het-rates10_20181106_v26.cdf \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv
+```
+
+Plan all four categories against the verified FIELDS switchback candidates:
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --plan-only
+```
+
+Run the native-cadence archive acquisition only **after** real CDF validation:
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --download --resume
+```
+
+Outputs under `data/isois/highres/` include `index.json`, one
+`<source-file>.npz` per product/day, accompanying `.manifest.json`, and
+per-file `.coverage.csv` time-overlap audits. Open NPZ using
+`np.load(filename, allow_pickle=False)`. Timestamps are UTC Unix
+**nanoseconds**. Coverage is time overlap **before interpreting quality flags**.
+Do not treat a sample overlapping a switchback as evidence of particle
+acceleration; check quality, count statistics, field-of-view, controls, and
+possible time delays. Original NASA CDFs and the FIELDS catalog are never deleted.
+
 ## ISʘIS: initial exploratory survey workflow
 
 First inspect the variables and metadata in an existing **summary** CDF:

@@ -21,21 +21,21 @@ ROOT = Path(__file__).resolve().parent
 SCRIPTS = {
     "fields-reader": "code/FIELDS/magnetic_data_reader.py",
     "fields-analysis": "code/FIELDS/magnetic_data_analysis.py",
-    "particles": "code/IS⊙IS/particle_data_reader.py",
-    "highres": "code/IS⊙IS/particle_data_reader.py",
-    "particle-analysis": "code/IS⊙IS/particle_data_analysis.py",
-    "fine-coverage": "code/IS⊙IS/particle_coverage_audit.py",
-    "coverage": "code/IS⊙IS/particle_multires_coverage.py",
+    "isois-reader": "code/IS⊙IS/isois_reader.py",
+    "isois-analyzer": "code/IS⊙IS/isois_analyzer.py",
+    # Legacy command names remain valid via the same unified interfaces.
+    "particles": "code/IS⊙IS/isois_reader.py",
+    "highres": "code/IS⊙IS/isois_reader.py",
+    "particle-analysis": "code/IS⊙IS/isois_analyzer.py",
+    "fine-coverage": "code/IS⊙IS/isois_analyzer.py",
+    "coverage": "code/IS⊙IS/isois_analyzer.py",
     "sweap": "code/SWEAP/sweap_data_reader.py",
 }
 SELF_TESTS = [
     "fields-reader",
     "fields-analysis",
-    "particles",
-    "particle-analysis",
-    "highres",
-    "fine-coverage",
-    "coverage",
+    "isois-reader",
+    "isois-analyzer",
     "sweap",
 ]
 EVENTS = Path("data/full_analysis_nov_dec_2018_candidates_strong_events.csv")
@@ -44,22 +44,27 @@ REPORT = Path("data/isois/highres/multires_coverage_summary.json")
 
 
 def help_text() -> None:
-    print("""Project Solar — local Python entry point
+    print("""Project Solar — stable command interface
 
-  python project.py status               Check code and local data/report paths
-  python project.py test                 Run all eight offline synthetic self-tests
-  python project.py coverage             Recalculate 599-event multires timing audit
-  python project.py fine-coverage --help Inspect 10-second flank coverage options
-  python project.py highres --help       Native EPI-Hi acquisition and extraction
-  python project.py particles --help     Legacy hourly summary survey reader
+  python project.py status                    Check local data and report paths
+  python project.py test                      Run all eight offline instrument self-tests
+  python project.py isois-reader --help       Unified IS⊙IS CDF reader
+  python project.py isois-analyzer --help     Unified particle coverage and survey analysis
+  python project.py isois-reader list-products
+  python project.py isois-reader epihi --help EPI-Hi products/cadences
+  python project.py isois-analyzer coverage   Recalculate multires timing coverage
+  python project.py highres --help            Legacy EPI-Hi command (still works)
+  python project.py particles --help          Legacy hourly survey command
+  python project.py coverage                  Legacy multires coverage command
+  python project.py fine-coverage --help
   python project.py particle-analysis --help
   python project.py fields-reader --help
   python project.py fields-analysis --help
-  python project.py sweap --help         SWEAP CDF inspection
+  python project.py sweap --help              SWEAP CDF inspection
 
-Arguments after a command are forwarded unchanged to the original script.
-No command downloads NASA data unless you explicitly use its --download
-option. Git tracks source code, not the local data/ directory.
+Subcommands forward their options to the existing tested backends. No NASA
+data downloads occur unless --download is explicitly requested.
+Git tracks the source code, not the local data/ directory.
 """)
 
 
@@ -90,15 +95,15 @@ def invoke(command: str, args: list[str]) -> int:
     if not source.is_file():
         print(f"Missing script: {source}", file=sys.stderr)
         return 2
-    if command == "highres":
-        args = ["--highres", *args]
-    if command == "coverage" and not args:
-        if not (ROOT / EVENTS).is_file():
-            print(f"Missing local event catalog: {EVENTS}", file=sys.stderr)
-            return 2
-        args = ["--events-csv", str(EVENTS)]
-        if (ROOT / SURVEY).is_file():
-            args += ["--summary-csv", str(SURVEY)]
+    legacy_modes = {
+        "particles": "summary",
+        "highres": "epihi",
+        "particle-analysis": "survey",
+        "fine-coverage": "fine-coverage",
+        "coverage": "coverage",
+    }
+    if command in legacy_modes:
+        args = [legacy_modes[command], *args]
     return subprocess.call(
         [sys.executable, str(source), *args], cwd=str(ROOT)
     )

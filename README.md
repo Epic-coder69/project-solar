@@ -243,59 +243,76 @@ names. Missing days, unavailable products, oversized downloads, and errors
 are reported explicitly rather than interpreted as zeros. It is a **survey**,
 not a validated quality/coverage audit of the 599 switchback candidates.
 
-## SWEAP FIELDS-event native extraction
+## SWEAP: maximal native data capture at FIELDS switchbacks
 
-The single \`code/SWEAP/sweap_data_reader.py\` now offers
-\`--extract-events\`. This mode reads the FIELDS event catalog using
-\`event_start_utc\` and \`event_end_exclusive_utc\` (or inclusive
-\`event_end_utc + 1s\` when the exclusive field is absent), adds
-optional flanking context and preserves every available CDF variable's
-native shape without binning. It handles time axes separately, keeps
-fill values and quality flags unchanged, splits UTC-midnight crossings,
-and caches original daily CDFs or requests NASA-generated window
-subsets if daily data are too large.
+The single `code/SWEAP/sweap_data_reader.py` now supports
+`--extract-events` and `--audit-events`. It preserves every time-alignable
+native variable, full instrument multidimensional distributions, original
+fill values, uncertainty and quality flags, science and support axes, full
+available CDF variable attributes and global metadata. It operates on the
+exact half-open FIELDS `event_start_utc` –
+`event_end_exclusive_utc` interval, never interpolating or averaging.
 
-**Smoke test: just the first candidate and all 13 products**
+By default, the saved window spans the magnetic event **plus** 10 seconds
+before and after and an additional **120 seconds of coarse-support context
+on each side**. Those phases are marked separately in the metadata.
+This extra context helps preserve low-cadence ~28–60-second spectra.
+Neither the outer support nor an EPOCH inside the event is evidence of
+actual measurement-integration overlap. The SPC L2 reader also derives an
+additional `derived_SPC_step_UTC_ns` array from the original `Epoch` and
+`MEASUREMENT_TIME` (nanosecond offsets per voltage step), without changing
+either original variable. These are per-step timestamps, not exposure lengths.
+
+Small source CDFs are cached locally. Large daily files are requested as
+NASA-generated native-resolution time subsets; neighboring event requests
+are grouped and reused when possible, with an individual-event retry
+if an oversized grouped subset is unavailable. Download budgets are
+configurable. There is **no default per-variable array size cap**
+(`--max-variable-mib 0`), but sources may still be limited by the
+per-file and total-download budgets, missing NASA coverage, or CDF
+time-axis ambiguities. Every omission is documented.
+
+**First real-data validation: just one event**
 
 ```bash
+cd ~/Desktop/project-solar
 git pull --ff-only origin main
 python project.py sweap --self-test
 python project.py sweap --extract-events \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --max-events 1 \
   --before-seconds 10 --after-seconds 10 \
-  --max-file-mib 50 --max-total-mib 250 \
-  --event-out data/sweap/events
+  --support-seconds 120 \
+  --max-file-mib 250 --max-total-mib 1200 \
+  --event-out data/sweap/events_v2
+python project.py sweap --audit-events --event-out data/sweap/events_v2
 ```
 
-**All 599 candidate windows (intentional large, network-heavy operation):**
+The output is isolated from the earlier prototype archives under
+`data/sweap/events_v2/` and remains Git-ignored. For each product/event/UTC
+day there is a losslessly sampled `.npz` archive (compressed, not resampled)
+with an adjacent `.json` containing the source reference, native dimensions,
+full CDF variable attributes, missing/invalid counts, and exact EPOCH phase
+counts. The output also includes `event_manifest.csv`, `summary.json`,
+`coverage_audit.csv`, and `coverage_audit_summary.json`.
+`--no-resume` forces regeneration. Changed extraction semantics and time
+windows automatically invalidate stale resumes.
 
-```bash
-python project.py sweap --extract-events \
-  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
-  --before-seconds 10 --after-seconds 10 \
-  --max-file-mib 50 --max-total-mib 2048 \
-  --event-out data/sweap/events
-```
+**Full 599-event run:** only after auditing the one-event results, omit
+`--max-events 1` and raise the total download budget to match
+available disk and network capacity (e.g. `--max-total-mib 8192`).
+`--event-products spc-l2i,spc-l3i` restricts the source products if needed.
 
-Use \`--event-products spc-l3i,spi-proton-l3\` to restrict products,
-\`--max-events N\` for controlled batches, \`--no-resume\` for an
-explicit overwrite. Resume is on by default.
+**Scientific caveats:** The 13 selected sources represent eight SWEAP
+measurement families, not every possible NASA mission dataset or
+unreleased raw Level 0/1 telemetry. L2 is calibrated detector data;
+L3 includes derived plasma quantities. Raw spacecraft time tagging,
+instrument integration durations, DQF definitions, 2018 viewing geometry,
+and channel-dependent systematic uncertainties must still be validated
+before inferring physical changes at an individual magnetic switchback.
+Some variables can have zero timestamps within the event even with
+useful surrounding data. Empty observations are never zero flux.
 
-For each event/product/day, outputs are an \`.npz\` native-array archive
-and adjacent \`.json\` metadata/status report; the overall
-\`event_manifest.csv\` and \`summary.json\` are also saved under
-\`data/sweap/events/\`. Source CDFs stay cached separately under
-\`data/sweap/\` and can be reopened to inspect full CDF attributes.
-Everything remains local and Git-ignored.
-
-**Scientific boundary:** \`EPOCH\` falling inside a FIELDS interval
-does not prove that a detector integration physically overlapped the
-event. Some distributions have ~28–60 s sampling and may yield zero
-time tags within a short window; that is *not* a zero flux measurement.
-This extractor preserves data but does not apply science-quality flags
-or calculate significant associations. Per-variable skipped/status
-reasons are always included rather than silently supplying fake data.
 
 ## Repository guide
 

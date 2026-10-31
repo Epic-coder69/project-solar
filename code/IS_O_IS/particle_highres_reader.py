@@ -253,29 +253,96 @@ def _remote_index(html, product):
     return {day: filename for day, (_, filename) in out.items()}
 
 
-def _download(session, filename, folder):
+def _download(session, filename, folder, *, attempts=5):
+    """Retrieve and validate one CDF with retry and HTTP Range partial resume.
+
+    A '.part' file is never treated as a completed CDF. Servers ignoring Range
+    requests receive a clean restart; a resumed transfer requires a matching
+    Content-Range. Non-retryable HTTP statuses fail promptly.
+    """
+    import time
+    import requests
+
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / filename
     if path.is_file() and path.stat().st_size:
         return path
     part = folder / (filename + '.part')
-    with session.get(urljoin(BASE_URL, filename), stream=True,
-                     timeout=(20, 120)) as response:
-        response.raise_for_status()
-        expected = int(response.headers.get('Content-Length') or 0)
-        with part.open('wb') as stream:
-            for chunk in response.iter_content(chunk_size=1024*1024):
-                if chunk:
-                    stream.write(chunk)
-    if not part.stat().st_size or (expected and part.stat().st_size != expected):
-        raise IOError(f'Incomplete download: {filename}; .part retained')
-    import cdflib
-    cdf = cdflib.CDF(str(part))
-    info = cdf.cdf_info()
-    if not (info.zVariables or info.rVariables):
-        raise IOError('Downloaded CDF contains no variables')
-    part.replace(path)
-    return path
+    url = urljoin(BASE_URL, filename)
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        offset = part.stat().st_size if part.is_file() else 0
+        headers = {'Accept-Encoding': 'identity', 'Connection': 'close'}
+        if offset:
+            headers['Range'] = f'bytes={offset}-'
+        try:
+            with session.get(url, stream=True, timeout=(20, 90),
+                             headers=headers) as response:
+                if response.status_code == 416 and offset:
+                    # The .part may be complete, or stale. Validate before use.
+                    try:
+                        import cdflib
+                        info = cdflib.CDF(str(part)).cdf_info()
+                        if info.zVariables or info.rVariables:
+                            part.replace(path)
+                            return path
+                    except Exception:
+                        pass
+                    part.unlink(missing_ok=True)
+                    raise IOError('Server rejected stale partial download; restarting')
+
+                response.raise_for_status()
+                if response.status_code == 206:
+                    match = re.fullmatch(
+                        r'bytes (\d+)-(\d+)/(\d+|\*)',
+                        response.headers.get('Content-Range', ''),
+                    )
+                    if not offset or not match or int(match.group(1)) != offset:
+                        raise IOError('Unsafe HTTP Range response; partial file left intact')
+                    total = int(match.group(3)) if match.group(3) != '*' else None
+                    mode = 'ab'
+                elif response.status_code == 200:
+                    # A server may ignore Range: start again, never append a full file.
+                    total_raw = response.headers.get('Content-Length', '')
+                    total = int(total_raw) if total_raw.isdigit() else None
+                    mode = 'wb'
+                else:
+                    raise IOError(f'Unexpected HTTP status {response.status_code}')
+
+                with part.open(mode) as stream:
+                    for chunk in response.iter_content(chunk_size=256 * 1024):
+                        if chunk:
+                            stream.write(chunk)
+            received = part.stat().st_size if part.is_file() else 0
+            if received == 0 or (total is not None and received != total):
+                raise IOError(
+                    f'Incomplete CDF: {received} of {total or "unknown"} bytes'
+                )
+            import cdflib
+            info = cdflib.CDF(str(part)).cdf_info()
+            if not (info.zVariables or info.rVariables):
+                raise IOError('Downloaded CDF contains no variables')
+            part.replace(path)
+            return path
+        except requests.HTTPError as exc:
+            last_error = exc
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in (408, 429, 500, 502, 503, 504):
+                raise  # e.g. 404: missing product, not a transient outage
+        except (requests.ConnectionError, requests.Timeout,
+                requests.ChunkedEncodingError, IOError, OSError, ValueError) as exc:
+            last_error = exc
+        if attempt < attempts:
+            delay = min(2 ** (attempt - 1), 12)
+            print(f'[RETRY DOWNLOAD {attempt}/{attempts}] {filename}: '
+                  f'{type(last_error).__name__}; retry in {delay}s', flush=True)
+            time.sleep(delay)
+
+    raise IOError(
+        f'Download failed after {attempts} attempts for {filename}: {last_error}; '
+        f'partial file kept at {part}'
+    )
 
 
 def _coverage(windows, starts, ends):

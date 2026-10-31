@@ -129,6 +129,45 @@ The old experimental work is preserved on the [pre-cleanup archive branch](https
 
 ## SWEAP: inspect NASA plasma measurements and actual cadence
 
+### Eight-family preliminary survey (13 CDF product variants)
+
+The CLI also offers a bounded discovery/inspection of all public SWEAP
+measurement families. This is a family grouping, not a claim of exactly
+eight official NASA datasets. The 13 product variants are SPC L2 charge
+spectra, SPC L3 proton moments, SPAN-I proton/alpha L2 flux distributions,
+SPAN-I proton/alpha L3 partial moments, SPAN-Ae and SPAN-B 3D electron
+distributions, SPA/SPB electron energy spectra, and combined/SPA/SPB
+electron pitch-angle distributions.
+
+```bash
+python project.py sweap --self-test
+python project.py sweap --list-products
+# Metadata catalog first; no downloads
+python project.py sweap --survey --date 2018-11-06 --catalog-only
+# Full bounded preview with a per-file and total download cap
+python project.py sweap --survey --date 2018-11-06 \
+  --minutes 8 --max-file-mib 50 --max-total-mib 250 \
+  --json data/sweap/survey_20181106.json
+# Optional subset:
+python project.py sweap --survey --date 2018-11-06 \
+  --families electron-3d,electron-pitch-angle
+```
+
+The JSON report captures product availability/status; CDF variable names,
+dimensions, units, linked time axes and small native record previews, and
+measured EPOCH differences. **The native array is NOT reduced or resampled.**
+Large or missing products remain marked skipped/unavailable. Download caps
+are 50 MiB per file and 250 MiB total by default. The entire dataset is
+not required for a first look; the reader only samples one record for
+large arrays. Validity masks, FOV, exact integration intervals, spacecraft
+attitude and electron energy thresholds need subsequent study.
+
+**Caveats:** SPAN-I alpha L2 SF01 is proton-contaminated. SPAN-I moments
+may be partial; SPAN-E SF1 energy-summed spectra are not suitable for
+unqualified statistical analysis because of deflection-angle bias.
+Inventory/diagnostic output does NOT establish usable joint FIELDS/IS⊙IS
+coverage. Consult [the NASA SWEAP data portal](https://sweap.cfa.harvard.edu/Data.html).
+
 The exploratory reader at [`code/SWEAP/sweap_data_reader.py`](../code/SWEAP/sweap_data_reader.py) downloads official **daily CDFs** (cached under Git-ignored `data/sweap/`) or inspects an already-downloaded CDF. It catalogs variable names and units, reports **measured EPOCH spacing** (median/p10/p90/largest gap), shows global quality-flag counts when available, masks fill values and prints the unresampled measurements inside a selectable eight-minute window.
 
 It currently supports `spc-l3i` (**default**: derived proton density/velocity/thermal-speed moments and fits), `spc-l2i` (cup current and charge-flux spectra), `spi-proton-l3` (partial SPAN-I proton moments), and `spe-pad-l3` (electron pitch-angle distribution metadata and cadence). The script is for data exploration—not validated plasma moments, interpretation, or automatic switchback detection.

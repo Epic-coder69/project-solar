@@ -948,8 +948,28 @@ def event_self_test():
         segments = list(split_utc_days("2018-11-05T23:59:58Z",
                                        "2018-11-06T00:00:02Z"))
         assert len(segments) == 2 and segments[0][2] == segments[1][1]
-    print("PASS: FIELDS exact half-open UTC event bounds, flanks, 3D arrays, "
-          "quality flags, time-axis audit, safe NPZ and midnight split")
+        # Full offline pipeline: archive + manifest + resumability, no NASA I/O.
+        fake.CDF = lambda path: FakeCDF()
+        with patch.object(sys.modules[__name__], "event_source",
+                          return_value={"status": "cached",
+                                        "path": str(Path(directory) / "fixture.cdf"),
+                                        "mode": "synthetic_fixture"}):
+            target = Path(directory) / "event_out"
+            first = extract_events(csv_path, target, Path(directory) / "cache",
+                                   ["spc-l3i"], max_events=1,
+                                   before_seconds=1, after_seconds=1)
+            assert first["status_counts"] == {"saved": 1}
+            saved_files = list(target.glob("spc-l3i/*.npz"))
+            assert len(saved_files) == 1
+            with np.load(saved_files[0], allow_pickle=False) as saved:
+                assert saved["flux"].shape == (6, 2, 3, 4)
+            assert pd.read_csv(target / "event_manifest.csv").iloc[0]["records_primary_epoch"] == 6
+            again = extract_events(csv_path, target, Path(directory) / "cache",
+                                   ["spc-l3i"], max_events=1,
+                                   before_seconds=1, after_seconds=1)
+            assert again["status_counts"] == {"resumed": 1}
+    print("PASS: FIELDS exact UTC event bounds, flanks, 3D arrays, flags, "
+          "time axes, midnight split, full NPZ/manifest pipeline and resume")
 
 
 def main():

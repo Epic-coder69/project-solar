@@ -348,6 +348,9 @@ def self_test():
                 'A_H_Rate': np.ones((5,2)),
                 'A_H': np.ones((5,2)),
                 'A_H_Uncertainty': np.ones((5,2)),
+                'HEAVY_ENERGY': np.array([5., 10., 20.]),
+                'SECTOR_NUM': np.arange(4),
+                'R26A_CNO_SECT_Flux': np.ones((5,3,4)),
             }
         def cdf_info(self):
             return SimpleNamespace(zVariables=list(self.vars), rVariables=[])
@@ -362,6 +365,9 @@ def self_test():
                 return {'DEPEND_0':'Epoch','DEPEND_1':'H_ENERGY','FILLVAL':-1e31}
             if name == 'Quality_Flag':
                 return {'DEPEND_0':'Epoch','DEPEND_1':'Quality_Flag_NUM'}
+            if name == 'R26A_CNO_SECT_Flux':
+                return {'DEPEND_0':'Epoch','DEPEND_1':'HEAVY_ENERGY',
+                        'DEPEND_2':'SECTOR_NUM'}
             return {}
     windows = [(_utc('2018-11-06T00:00:05Z'), _utc('2018-11-06T00:00:15Z'))]
     assert _overlap(ticks-5_000_000_000,ticks+5_000_000_000,windows).tolist() == [False,True,False,False,False]
@@ -369,6 +375,7 @@ def self_test():
     arrays, meta = decode(fake, windows, epoch_decoder=lambda _: ticks)
     assert arrays['A_H_Flux'].shape == (1,2)
     assert arrays['Quality_Flag'].shape == (1,10)
+    assert arrays['R26A_CNO_SECT_Flux'].shape == (1,3,4)
     assert meta['median_integration_seconds'] == 10.0
     assert meta['retained_time_records'] == 1
     fake.vars['A_H_Flux'] = np.ones((5,3))
@@ -383,6 +390,7 @@ def self_test():
         _save_npz(path, arrays)
         with np.load(path, allow_pickle=False) as saved:
             assert saved['A_H_Flux'].shape == (1,2)
+            assert saved['R26A_CNO_SECT_Flux'].shape == (1,3,4)
     assert _remote_index('psp_isois-epihi_l2-het-rates10_20181106_v2.cdf '
                          'psp_isois-epihi_l2-het-rates10_20181106_v26.cdf',
                          'het-rates10')['20181106'].endswith('_v26.cdf')

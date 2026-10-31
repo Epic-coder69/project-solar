@@ -3,7 +3,7 @@
 
 Keeps detector integration boundaries, energy/sector axes, counts, flux,
 uncertainties, viewing geometry and quality flags in separate daily NPZ files.
-Default products: LET1 10s (H, He), LET1 300s (heavy-ion groups), HET 10s
+Default products: LET1 10s (H, He), LET1 60s (heavy elements), HET 10s
 (H, He, electrons). The optional 1s SECOND-RATES product is reduced-bin
 quicklook and must not be substituted for full science-grade flux comparisons.
 The original hourly summary mode remains unchanged.
@@ -28,14 +28,15 @@ from particle_data_reader import (
 )
 
 BASE_URL = 'https://spp-isois.sr.unh.edu/data_public/EPIHi/level2/'
-PRODUCTS = ('let1-rates10', 'let1-rates300', 'het-rates10', 'second-rates')
-DEFAULT_PRODUCTS = PRODUCTS[:3]
+PRODUCTS = ('let1-rates10', 'let1-rates60', 'let1-rates300', 'het-rates10', 'second-rates')
+DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10', 'second-rates')
 FILE_RE = re.compile(
-    r'^psp_isois-epihi_l2-(let1-rates10|let1-rates300|het-rates10|second-rates)_(\d{8})_v(\d+)\.cdf$', re.I
+    r'^psp_isois-epihi_l2-(let1-rates10|let1-rates60|let1-rates300|het-rates10|second-rates)_(\d{8})_v(\d+)\.cdf$', re.I
 )
 SCHEMA_VERSION = 1
 CHANNEL_GUIDE = {
     'let1-rates10': '10s LET1 H/He energy spectra; He is NOT the original Z6-28 heavy-ion channel',
+    'let1-rates60': '60s LET1 species-resolved C, N, O, Ne, Mg, Si, Fe etc.; not identical to the combined Z6-28 summary channel',
     'let1-rates300': '300s LET1 CNO, Ne-Si, Fe-group measurements; not identical to A_Heavy_Rate_TS',
     'het-rates10': '10s HET H and electron energy spectra plus He',
     'second-rates': '1s reduced-energy-bin H/electron quicklook; not for quantitative science',

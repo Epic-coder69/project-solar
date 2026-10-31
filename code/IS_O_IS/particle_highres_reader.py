@@ -143,7 +143,7 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
         'epoch_utc_ns': midpoint[keep], 'integration_start_utc_ns': start[keep],
         'integration_end_utc_ns': end[keep],
     }
-    details, depends = {}, set()
+    details, depends, skipped_empty = {}, set(), []
     for name in names:
         if name == 'Epoch':
             continue
@@ -151,6 +151,13 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
         if _attr(attrs, 'DEPEND_0') != 'Epoch':
             continue
         a = _safe_array(cdf.varget(name))
+        if a.ndim >= 1 and a.shape[0] == 0 and len(midpoint):
+            # Some hourly HET CDFs declare empty auxiliary variables,
+            # e.g. A_CNO_SECT_Rate with shape (0, 2, 25).
+            # Preserve the absence honestly: never pad with zeros.
+            skipped_empty.append({'name': name, 'shape': list(a.shape),
+                                  'reason': 'CDF variable has zero records'})
+            continue
         if a.ndim < 1 or a.shape[0] != len(midpoint):
             raise ValueError(f'{name}: time axis {a.shape} inconsistent with Epoch')
         a = a[keep].copy()
@@ -234,6 +241,7 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
         'rate_variables': rate_names,
         'quality_flags_preserved': 'Quality_Flag' in arrays,
         'quality_flags_interpreted': False,
+        'skipped_zero_record_variables': skipped_empty,
         'variables': details,
     }
 
@@ -582,6 +590,24 @@ def self_test():
         assert 'no decoded flux' in str(exc)
     else:
         raise AssertionError('Rates-only quicklook silently passed as differential flux')
+    # Official hourly HET files can declare zero-record auxiliaries.
+    # They must be recorded as unavailable, not replaced with fake zeros.
+    class HourlyEmptyCDF(FakeCDF):
+        def __init__(self):
+            super().__init__()
+            self.vars['A_CNO_SECT_Rate'] = np.empty((0, 2, 25))
+        def varattsget(self, name):
+            if name == 'A_CNO_SECT_Rate':
+                return {'DEPEND_0':'Epoch','UNITS':'counts s!E-1!N'}
+            return super().varattsget(name)
+    hourly = HourlyEmptyCDF()
+    result, meta = decode(hourly, epoch_decoder=lambda _: ticks,
+                          product='het-rates3600')
+    assert 'A_CNO_SECT_Rate' not in result
+    assert any(x['name'] == 'A_CNO_SECT_Rate'
+               for x in meta['skipped_zero_record_variables'])
+    assert 'A_H_Flux' in result
+
     # Synthetic transient disconnect and safe HTTP Range resume, no live network.
     import requests
     class FakeResponse:

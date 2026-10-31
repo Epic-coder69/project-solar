@@ -72,10 +72,12 @@ PRODUCT_CADENCE = {
 }
 TIER_PRIORITY = {
     'fine_event_and_flanks': 0,
-    'coarse_event_scale': 1,
-    'coarse_partial_context': 2,
-    'hourly_background_only': 3,
-    'no_observation': 4,
+    'fine_event_only': 1,
+    'fine_partial_context': 2,
+    'coarse_event_scale': 3,
+    'coarse_partial_context': 4,
+    'hourly_background_only': 5,
+    'no_observation': 6,
 }
 
 
@@ -146,7 +148,11 @@ def _measure(event, starts, ends, *, source, variable, expected_cadence):
     if (cadence <= 10 and nominal_full
             and during['complete'] >= 3):
         tier = 'fine_event_and_flanks'
-    elif (10 < cadence <= 300 and during['fraction'] >= .90
+    elif cadence <= 10 and during['fraction'] >= .90:
+        tier = 'fine_event_only'
+    elif cadence <= 10 and during['fraction'] > 0:
+        tier = 'fine_partial_context'
+    elif (cadence <= 300 and during['fraction'] >= .90
           and during['complete'] >= 1):
         tier = 'coarse_event_scale'
     elif cadence <= 300 and during['fraction'] > 0:
@@ -302,6 +308,13 @@ def self_test():
                     variable='LET1_A_H_Rate', expected_cadence=1)
     assert fine['coverage_tier'] == 'fine_event_and_flanks'
     assert fine['isolated_before_after_integrations']
+    # Fine cadence with partial flanks is still fine data, not coarser context.
+    shortened = _measure(
+        windows.iloc[0], s[(s >= start) & (s < start+180*NS)],
+        e[(s >= start) & (s < start+180*NS)],
+        source='second-rates', variable='LET1_A_H_Rate',
+        expected_cadence=1)
+    assert shortened['coverage_tier'] == 'fine_event_only'
     # Hourly integration covers the whole time range, but NEVER the 10s flanks.
     hourly = _measure(
         windows.iloc[0],

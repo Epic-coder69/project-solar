@@ -253,7 +253,8 @@ def _remote_index(html, product):
     return {day: filename for day, (_, filename) in out.items()}
 
 
-def _download(session, filename, folder, *, attempts=5):
+def _download(session, filename, folder, *, attempts=5,
+              validator=None, sleeper=None):
     """Retrieve and validate one CDF with retry and HTTP Range partial resume.
 
     A '.part' file is never treated as a completed CDF. Servers ignoring Range
@@ -262,6 +263,15 @@ def _download(session, filename, folder, *, attempts=5):
     """
     import time
     import requests
+
+    if validator is None:
+        def validator(source):
+            import cdflib
+            info = cdflib.CDF(str(source)).cdf_info()
+            if not (info.zVariables or info.rVariables):
+                raise IOError('Downloaded CDF contains no variables')
+    if sleeper is None:
+        sleeper = time.sleep
 
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / filename
@@ -312,10 +322,7 @@ def _download(session, filename, folder, *, attempts=5):
                 raise IOError(
                     f'Incomplete CDF: {received} of {total or "unknown"} bytes'
                 )
-            import cdflib
-            info = cdflib.CDF(str(part)).cdf_info()
-            if not (info.zVariables or info.rVariables):
-                raise IOError('Downloaded CDF contains no variables')
+            validator(part)
             part.replace(path)
             return path
         except requests.HTTPError as exc:
@@ -330,7 +337,7 @@ def _download(session, filename, folder, *, attempts=5):
             delay = min(2 ** (attempt - 1), 12)
             print(f'[RETRY DOWNLOAD {attempt}/{attempts}] {filename}: '
                   f'{type(last_error).__name__}; retry in {delay}s', flush=True)
-            time.sleep(delay)
+            sleeper(delay)
 
     raise IOError(
         f'Download failed after {attempts} attempts for {filename}: {last_error}; '
@@ -567,10 +574,63 @@ def self_test():
         assert 'no decoded flux' in str(exc)
     else:
         raise AssertionError('Rates-only quicklook silently passed as differential flux')
+    # Synthetic transient disconnect and safe HTTP Range resume, no live network.
+    import requests
+    class FakeResponse:
+        def __init__(self, status, payload, headers):
+            self.status_code = status
+            self.payload = payload
+            self.headers = headers
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(f'HTTP {self.status_code}')
+        def iter_content(self, chunk_size):
+            yield self.payload
+
+    class FakeSession:
+        def __init__(self, sequence):
+            self.sequence = iter(sequence)
+            self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append(kwargs)
+            item = next(self.sequence)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    with TemporaryDirectory() as folder:
+        folder = Path(folder)
+        sample = 'psp_isois-epihi_l2-het-rates10_20181106_v26.cdf'
+        part = folder / (sample + '.part')
+        part.write_bytes(b'ab')
+        session = FakeSession([
+            requests.ConnectionError('simulated network disconnect'),
+            FakeResponse(206, b'cde', {'Content-Range': 'bytes 2-4/5'}),
+        ])
+        def verify_sample(path):
+            assert path.read_bytes() == b'abcde'
+        result = _download(session, sample, folder, attempts=2,
+                           validator=verify_sample, sleeper=lambda _: None)
+        assert result.read_bytes() == b'abcde'
+        assert session.calls[0]['headers']['Range'] == 'bytes=2-'
+        assert not part.exists()
+        result.unlink()
+        part.write_bytes(b'old')
+        session = FakeSession([
+            FakeResponse(200, b'fresh', {'Content-Length': '5'})
+        ])
+        result = _download(session, sample, folder, attempts=1,
+                           validator=lambda p: None, sleeper=lambda _: None)
+        assert result.read_bytes() == b'fresh'  # ignores Range: clean restart
+
     assert _remote_index('psp_isois-epihi_l2-het-rates10_20181106_v2.cdf '
                          'psp_isois-epihi_l2-het-rates10_20181106_v26.cdf',
                          'het-rates10')['20181106'].endswith('_v26.cdf')
-    print('PASS: native EPI-Hi overlap, energy axes, 1s count rates, flags, validity, NPZ and version selection')
+    print('PASS: EPI-Hi timing, energy axes, 1s counts, flags, NPZ, network retry and safe Range resume')
 
 
 def main(argv=None):

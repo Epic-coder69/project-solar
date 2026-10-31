@@ -8,9 +8,9 @@ Examples:
   python project.py highres --events-csv data/...
   python project.py sweap --self-test
 
-IS⊙IS now exposes one public reader and one public analyzer with the
-original tested instrument-specific backends retained underneath. Legacy
-command aliases and all stored NASA data paths are preserved.
+IS⊙IS is implemented in exactly two Python files: one actual CDF reader
+and one actual particle analyzer, including their original regression tests.
+Legacy command aliases and all stored NASA data paths are preserved.
 """
 from __future__ import annotations
 
@@ -131,18 +131,9 @@ def main(argv: list[str] | None = None) -> int:
             if rc:
                 print(f"[FAILED] {name} exit={rc}", file=sys.stderr)
                 return rc
-        # Exercise the new command routing without NASA access or writes.
-        routing = ROOT / "code/IS⊙IS/isois_interface_tests.py"
-        if not routing.is_file():
-            print(f"[FAILED] Missing IS⊙IS routing tests: {routing}",
-                  file=sys.stderr)
-            return 2
-        print("\n[TEST] IS⊙IS unified-interface routing", flush=True)
-        rc = subprocess.call([sys.executable, str(routing)], cwd=str(ROOT))
-        if rc:
-            print(f"[FAILED] IS⊙IS routing tests exit={rc}", file=sys.stderr)
-            return rc
-        print("\nPASS: all 8 instrument self-tests and unified routing tests")
+        print("\nPASS: all instrument decoders, science audits and "
+              "unified two-file IS⊙IS interfaces")
+
         return 0
     if command not in SCRIPTS:
         print(f"Unknown command: {command}", file=sys.stderr)

@@ -106,9 +106,11 @@ Project Solar/
     │   ├── magnetic_data_reader.py
     │   ├── magnetic_data_analysis.py
     │   └── external_libraries_requirements.txt
-    └── IS⊙IS/
-        ├── particle_data_reader.py
-        └── particle_data_analysis.py
+    ├── IS⊙IS/
+    │   ├── particle_data_reader.py
+    │   └── particle_data_analysis.py
+    └── SWEAP/
+        └── sweap_data_reader.py
 ```
 
 - **FIELDS reader:** obtains full-cadence MAG data and screens magnetic investigation windows, with progress reporting and daily checkpoints.
@@ -117,6 +119,38 @@ Project Solar/
 - **IS⊙IS analysis:** aligns those survey-rate integrations with existing FIELDS strong-event intervals to summarize exposure-weighted pre/during/post rates and data coverage. This is **exploratory**, not a statistically validated correlation or calibrated flux analysis.
 
 The old experimental work is preserved on the [pre-cleanup archive branch](https://github.com/Epic-coder69/project-solar/tree/archive/pre-cleanup-2026-10-25).
+
+## SWEAP: inspect NASA plasma measurements and actual cadence
+
+The exploratory reader at [`code/SWEAP/sweap_data_reader.py`](code/SWEAP/sweap_data_reader.py) downloads official **daily CDFs** (cached under Git-ignored `data/sweap/`) or inspects an already-downloaded CDF. It catalogs variable names and units, reports **measured EPOCH spacing** (median/p10/p90/largest gap), shows global quality-flag counts when available, masks fill values and prints the unresampled measurements inside a selectable eight-minute window.
+
+It currently supports `spc-l3i` (**default**: derived proton density/velocity/thermal-speed moments and fits), `spc-l2i` (cup current and charge-flux spectra), `spi-proton-l3` (partial SPAN-I proton moments), and `spe-pad-l3` (electron pitch-angle distribution metadata and cadence). The script is for data exploration—not validated plasma moments, interpretation, or automatic switchback detection.
+
+Run from the repository root:
+
+```bash
+python -m pip install -r code/FIELDS/external_libraries_requirements.txt
+python code/SWEAP/sweap_data_reader.py --self-test
+python code/SWEAP/sweap_data_reader.py --list-products
+
+# Download one NASA day and inspect the first 8 minutes with published records.
+python code/SWEAP/sweap_data_reader.py --product spc-l3i \
+  --date 2018-11-06 --download
+
+# Replace the example UTC start with an actual FIELDS candidate's start.
+python code/SWEAP/sweap_data_reader.py --product spc-l3i \
+  --date 2018-11-06 --download --start 2018-11-06T12:00:00 \
+  --minutes 8 --csv data/sweap/example_window.csv \
+  --json data/sweap/example_window_diagnostics.json
+
+# Inspect an existing NASA CDF without network access.
+python code/SWEAP/sweap_data_reader.py --product spc-l3i \
+  --file data/sweap/spc-l3i/ACTUAL_FILENAME.cdf --minutes 8
+```
+
+**Important:** The nominal SPC archive cadence (~0.2185 s) is not guaranteed real coverage. SWEAP EPOCH records may be irregular and mark the start of an instrument spectrum, not a uniform measurement integration. The tool measures available timestamp separations, not true exposure time; a valid scientific comparison also needs quality flags, uncertainties, field-of-view checks and alignment with the actual FIELDS event interval. SPAN-I moments may be incomplete due to field-of-view limitations. The CDF's native measurement variables must not be confused with raw Level-0 detector packets.
+
+NASA references: [SWEAP data user guide](https://spdf.gsfc.nasa.gov/pub/data/psp/sweap/sweap_data_user_guide.pdf) and [SPC L3 catalog](https://spase-metadata.org/NASA/NumericalData/ParkerSolarProbe/SWEAP/SPC/Level3/SolarWindMomentsFits/PT0.2185S).
 
 ## Setup
 

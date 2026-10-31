@@ -659,6 +659,22 @@ RECOMMENDED_SOURCE_VARIABLES = {
 }
 
 
+def unlabeled_quality_bits(values):
+    """Count set bits in SPAN QUALITY_FLAG; avoid assuming bit meanings."""
+    arr = np.asarray(values)
+    if not np.issubdtype(arr.dtype, np.number):
+        return {}
+    finite = np.isfinite(arr)
+    vals = arr[finite]
+    vals = vals[(vals >= 0) & (vals <= 65535)]
+    ints = vals.astype(np.uint64)
+    return {
+        str(bit): int(np.count_nonzero((ints & (np.uint64(1) << np.uint64(bit)) != 0))
+        for bit in range(16)
+        if np.any((ints & (np.uint64(1) << np.uint64(bit)) != 0)
+    }
+
+
 def audit_native_quality(item):
     """Inspect saved native flags at FIELDS event EPOCHs, without changing data.
 
@@ -705,7 +721,15 @@ def audit_native_quality(item):
                     "unflagged_fraction": float(clean.mean()) if len(clean) else None,
                     "distinct_flag_values": {
                         str(v): int(n) for v, n in zip(*np.unique(values, return_counts=True))
-                    }}
+                    },
+                    "quality_flag_set_bit_counts_uninterpreted": (
+                        unlabeled_quality_bits(values)
+                        if flag_name.lower() == "quality_flag" else {}),
+                    "quality_flag_note": (
+                        "Bit positions are counts only; nonzero does not itself "
+                        "establish invalid science data. Decode per instrument."
+                        if flag_name.lower() == "quality_flag" else
+                        "This field is not assumed to be a bitmask.")}
             # SPC DQF array [time, 32] is multidimensional; list nonzero
             # counts per bit separately, rather than collapsing to a badness.
             valid = np.isfinite(values)
@@ -716,7 +740,10 @@ def audit_native_quality(item):
                 "shape": list(values.shape),
                 "rows_with_any_nonzero_flag": int(nonzero.reshape((len(values), -1)).any(axis=1).sum()),
                 "flag_nonzero_count_per_component": nonzero.sum(axis=0).tolist(),
-                "nonfinite_elements": int((~valid).sum())}
+                "nonfinite_elements": int((~valid).sum()),
+                "quality_flag_set_bit_counts_uninterpreted": (
+                    unlabeled_quality_bits(values)
+                    if flag_name.lower() == "quality_flag" else {})}
     except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
         return {"status": "quality_read_error", "reason": str(exc)}
 

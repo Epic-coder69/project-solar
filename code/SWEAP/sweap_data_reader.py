@@ -942,12 +942,17 @@ def write_recovered_source(cdf_path, product, event, out_dir, kind,
     result = {"status": "saved" if target.is_file() else "no_records",
               "source_kind": kind, "source_file": str(cdf_path),
               "archive": str(target) if target.is_file() else None,
+              "event_start_utc": event["event_start_utc"],
+              "event_end_exclusive_utc": event["event_end_exclusive_utc"],
               "variable_inventory_comparison": comparison,
               "variables": report["variables"],
               "time_axes": report["time_axes"],
               "global_attributes": report["metadata"]["global_attributes"],
               "error_variables": report["errors"],
               "extractor_version": EVENT_EXTRACTOR_VERSION}
+    result["quality_audit"] = (
+        audit_native_quality(result) if target.is_file()
+        else {"status": "no_archive"})
     metadata = target.with_suffix(".json")
     metadata.write_text(json.dumps(result, indent=2, default=cdf_json) + "\n",
                         encoding="utf-8")

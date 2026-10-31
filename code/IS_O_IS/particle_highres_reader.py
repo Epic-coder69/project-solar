@@ -29,17 +29,17 @@ from particle_data_reader import (
 
 BASE_URL = 'https://spp-isois.sr.unh.edu/data_public/EPIHi/level2/'
 PRODUCTS = ('let1-rates10', 'let1-rates60', 'let1-rates300', 'het-rates10', 'second-rates')
-DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10')
+DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10', 'second-rates')
 FILE_RE = re.compile(
     r'^psp_isois-epihi_l2-(let1-rates10|let1-rates60|let1-rates300|het-rates10|second-rates)_(\d{8})_v(\d+)\.cdf$', re.I
 )
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CHANNEL_GUIDE = {
     'let1-rates10': '10s LET1 H/He energy spectra; He is NOT the original Z6-28 heavy-ion channel',
     'let1-rates60': '60s LET1 species-resolved C, N, O, Ne, Mg, Si, Fe etc.; not identical to the combined Z6-28 summary channel',
     'let1-rates300': '300s LET1 CNO, Ne-Si, Fe-group measurements; not identical to A_Heavy_Rate_TS',
     'het-rates10': '10s HET H and electron energy spectra plus He',
-    'second-rates': '1s reduced-energy-bin H/electron quicklook; not for quantitative science',
+    'second-rates': '1s LET1/LET2/HET proton/electron count rates and counts; no differential flux or species-resolved energy grid',
 }
 
 
@@ -123,7 +123,7 @@ def _numeric_mask(a, attrs):
     return valid
 
 
-def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns):
+def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
     info = cdf.cdf_info()
     names = list(info.zVariables) + list(info.rVariables)
     if 'Epoch' not in names:
@@ -152,6 +152,7 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns):
             name.endswith(('_Rate', '_Flux', '_Uncertainty',
                            '_Uncertainty_Plus', '_Uncertainty_Minus'))
             or re.match(r'^(R\d+)?[ABC]_(H|He|Electrons|C|N|O|Fe|Mg|Si)($|_)', name)
+            or re.fullmatch(r'(LET[12]_[ABC]|HET_[AB])_(H|Electrons)', name)
         ):
             arrays[name + '__valid_numeric'] = _numeric_mask(a, attrs)
         axes = {key: _attr(attrs, key) for key in
@@ -177,15 +178,31 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns):
             details[name] = {
                 'shape': list(a.shape), 'units': _json(_attr(attrs, 'UNITS', ''))
             }
-    if not any(n.endswith('_Flux') for n in arrays):
+    flux_names = [n for n in arrays if n.endswith('_Flux')]
+    rate_names = [n for n in arrays if n.endswith('_Rate')]
+    if product == 'second-rates':
+        required = (
+            'LET1_A_H_Rate', 'LET1_A_Electrons_Rate',
+            'HET_A_H_Rate', 'HET_A_Electrons_Rate',
+        )
+        missing = [name for name in required if name not in arrays]
+        if missing:
+            raise ValueError(f'1-second CDF missing mandatory time-aligned rates: {missing}')
+        if flux_names:
+            raise ValueError('Unexpected differential-flux arrays in second-rates: review schema')
+        for name in rate_names:
+            units = str(_attr(cdf.varattsget(name), 'UNITS', '')).lower()
+            if 'count' not in units or 's!' not in units:
+                raise ValueError(f'{name}: expected count rate units, received {units!r}')
+        measurement_class = 'counts_and_count_rates_only'
+    elif flux_names:
+        measurement_class = 'energy_resolved_differential_flux_and_rates'
+    else:
         candidates = [(n, str(_attr(cdf.varattsget(n), 'DEPEND_0', '')))
                       for n in names if n.endswith(('_Flux', '_Rate'))]
         raise ValueError(
-            'No time-aligned flux arrays decoded from CDF. '
-            'Inspect source dependencies before assuming data are missing: '
-            f'flux/rate candidate names and DEPEND_0={candidates[:24]}; '
-            f'Epoch records={len(midpoint)}. '
-            'The hourly/10s/60s science products remain available.'
+            f'{product or "science product"} has no decoded flux arrays; '
+            f'candidates and DEPEND_0={candidates[:24]}'
         )
     for name, meta in details.items():
         if name not in arrays:
@@ -204,6 +221,9 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns):
             if len(midpoint) else None,
         'median_cadence_seconds': float(np.median(np.diff(midpoint)/1e9))
             if len(midpoint) > 1 else None,
+        'measurement_class': measurement_class,
+        'flux_variables': flux_names,
+        'rate_variables': rate_names,
         'quality_flags_preserved': 'Quality_Flag' in arrays,
         'quality_flags_interpreted': False,
         'variables': details,
@@ -317,7 +337,7 @@ def _process(path, product, output_dir, windows, event_df, catalog_hash, resume)
                 and coverage_ok):
             return manifest, 'RESUME'
     cdf = cdflib.CDF(str(path))
-    arrays, info = decode(cdf, windows)
+    arrays, info = decode(cdf, windows, product=product)
     _save_npz(dest, arrays)
     coverage_path = None
     if event_df is not None:
@@ -401,10 +421,60 @@ def self_test():
         with np.load(path, allow_pickle=False) as saved:
             assert saved['A_H_Flux'].shape == (1,2)
             assert saved['R26A_CNO_SECT_Flux'].shape == (1,3,4)
+    class OneSecondCDF(FakeCDF):
+        def __init__(self):
+            super().__init__()
+            t = t0 + np.arange(5, dtype=np.int64)*1_000_000_000
+            self.vars = {
+                'Epoch': t, 'Epoch_DELTA': np.array([500_000_000], dtype=np.int64),
+                'Quality_Flag_NUM': np.arange(10),
+                'Quality_Flag': np.zeros((5, 10), dtype=np.int16),
+            }
+            for instrument, side in (('LET1','A'),('LET1','B'),('LET2','C'),
+                                     ('HET','A'),('HET','B')):
+                for species in ('H','Electrons'):
+                    name = f'{instrument}_{side}_{species}'
+                    self.vars[name] = np.ones(5, dtype=np.float64)
+                    self.vars[name + '_Rate'] = np.ones(5, dtype=np.float64)
+            self.vars['LET1_A_H_Rate'][1] = -1e31
+
+        def varattsget(self, name):
+            if name.startswith(('LET1_', 'LET2_', 'HET_')):
+                return {
+                    'DEPEND_0': 'Epoch',
+                    'UNITS': 'counts s!E-1!N' if name.endswith('_Rate') else 'counts',
+                    'FILLVAL': -1e31, 'VALIDMIN': 0,
+                }
+            return super().varattsget(name)
+
+    onesec = OneSecondCDF()
+    quicklook, quick_meta = decode(
+        onesec, epoch_decoder=lambda _: onesec.vars['Epoch'], product='second-rates'
+    )
+    assert quick_meta['measurement_class'] == 'counts_and_count_rates_only'
+    assert quick_meta['median_integration_seconds'] == 1.0
+    assert len(quick_meta['rate_variables']) == 10
+    assert quicklook['LET1_A_H_Rate'].shape == (5,)
+    assert quicklook['LET1_A_H_Rate__valid_numeric'].tolist() == [
+        True, False, True, True, True]
+    assert quicklook['LET1_A_H__valid_numeric'].all()
+    assert quicklook['Quality_Flag'].shape == (5, 10)
+    with TemporaryDirectory() as folder:
+        target = Path(folder) / 'second-rates.npz'
+        _save_npz(target, quicklook)
+        with np.load(target, allow_pickle=False) as saved:
+            assert saved['HET_A_Electrons_Rate'].shape == (5,)
+    try:
+        decode(onesec, epoch_decoder=lambda _: onesec.vars['Epoch'],
+               product='het-rates10')
+    except ValueError as exc:
+        assert 'no decoded flux' in str(exc)
+    else:
+        raise AssertionError('Rates-only quicklook silently passed as differential flux')
     assert _remote_index('psp_isois-epihi_l2-het-rates10_20181106_v2.cdf '
                          'psp_isois-epihi_l2-het-rates10_20181106_v26.cdf',
                          'het-rates10')['20181106'].endswith('_v26.cdf')
-    print('PASS: native EPI-Hi overlap, energy axes, flags, validity, NPZ and version selection')
+    print('PASS: native EPI-Hi overlap, energy axes, 1s count rates, flags, validity, NPZ and version selection')
 
 
 def main(argv=None):
@@ -413,7 +483,7 @@ def main(argv=None):
     p.add_argument('--file', type=Path, help='Decode one existing EPI-Hi CDF')
     p.add_argument('--events-csv', type=Path)
     p.add_argument('--products', nargs='+', choices=PRODUCTS, default=list(DEFAULT_PRODUCTS),
-                   help='Select EPI-Hi products; 1s second-rates requires explicit selection pending metadata validation')
+                   help='Select EPI-Hi products (1s rates-only quicklook; 10s/60s energy-resolved science)')
     p.add_argument('--start', help='UTC YYYY-MM-DD inclusive')
     p.add_argument('--end', help='UTC YYYY-MM-DD exclusive')
     p.add_argument('--before-minutes', type=float, default=30)

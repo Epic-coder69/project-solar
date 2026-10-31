@@ -332,6 +332,27 @@ def self_test():
         expected_cadence=60)
     assert coarse['coverage_tier'] == 'coarse_partial_context'
     with TemporaryDirectory() as folder:
+        survey = Path(folder) / 'summary.csv'
+        pd.DataFrame([{
+            'variable': 'A_H_Rate_TS',
+            'integration_start_utc': '2018-11-05T23:30:00Z',
+            'integration_end_utc': '2018-11-06T00:30:00Z',
+            'valid_measurement': True,
+        }, {
+            'variable': 'HET_A_H_Rate_TS',
+            'integration_start_utc': '2018-11-05T23:30:00Z',
+            'integration_end_utc': '2018-11-06T00:30:00Z',
+            'valid_measurement': False,
+        }]).to_csv(survey, index=False)
+        summary, sh = _summary_sources(survey)
+        assert sh == _sha256(survey)
+        assert 'LET1_A_H' in summary
+        assert 'HET_A_H' not in summary
+        fallback = _measure(windows.iloc[0], summary['LET1_A_H'][0],
+                            summary['LET1_A_H'][1], source='summary',
+                            variable='A_H_Rate_TS', expected_cadence=3600)
+        assert fallback['coverage_tier'] == 'hourly_background_only'
+    with TemporaryDirectory() as folder:
         root = Path(folder)
         p = root/'let1-rates3600'
         p.mkdir()

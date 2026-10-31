@@ -919,13 +919,16 @@ def write_recovered_source(cdf_path, product, event, out_dir, kind,
     import cdflib
     source = cdflib.CDF(str(cdf_path))
     report, arrays = native_event_slice(
-        source, event["window_start_utc"], event["window_end_exclusive_utc"],
+        source, event.get("segment_start_utc", event["window_start_utc"]),
+        event.get("segment_end_exclusive_utc", event["window_end_exclusive_utc"]),
         event_start=event["event_start_utc"],
         event_end=event["event_end_exclusive_utc"],
         before_seconds=event["before_seconds"],
         after_seconds=event["after_seconds"], product=product)
+    segment_stamp = utc(event.get("segment_start_utc", event["window_start_utc"])).strftime(
+        "%Y%m%dT%H%M%S%fZ")
     target = out_dir / "source_recovery" / kind / product / (
-        f"{event['event_key']}.npz")
+        f"{event['event_key']}_{segment_stamp}.npz")
     target.parent.mkdir(parents=True, exist_ok=True)
     if report["any_records_in_window"] and arrays:
         temporary = target.with_suffix(".part.npz")
@@ -983,7 +986,8 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
         event = {k: original_metadata[k] for k in (
             "event_key", "window_start_utc", "window_end_exclusive_utc",
             "event_start_utc", "event_end_exclusive_utc",
-            "before_seconds", "after_seconds")}
+            "before_seconds", "after_seconds",
+            "segment_start_utc", "segment_end_exclusive_utc")}
         day = date.fromisoformat(str(entry["day"]))
         status = {"event_id": entry.get("event_id"), "product": product,
                   "day": str(day), "subset_variables": len(subset_variables),
@@ -1051,8 +1055,8 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
                 attempt = {"variables": names}
                 try:
                     targeted = request_targeted_native_subset(
-                        product, event["window_start_utc"],
-                        event["window_end_exclusive_utc"], names, cache)
+                        product, event["segment_start_utc"],
+                        event["segment_end_exclusive_utc"], names, cache)
                     if targeted["status"] == "found":
                         outcome, used = bounded_download(
                             targeted["url"], targeted["path"],

@@ -73,8 +73,8 @@ PRODUCT_CADENCE = {
 TIER_PRIORITY = {
     'fine_event_and_flanks': 0,
     'fine_event_only': 1,
-    'fine_partial_context': 2,
-    'coarse_event_scale': 3,
+    'coarse_event_scale': 2,
+    'fine_partial_context': 3,
     'coarse_partial_context': 4,
     'hourly_background_only': 5,
     'no_observation': 6,

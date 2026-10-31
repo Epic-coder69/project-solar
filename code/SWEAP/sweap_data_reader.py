@@ -787,8 +787,9 @@ def audit_event_archives(directory):
             str(row["product"]): row["missing_recommended_source_variables"].split(";")
             for _, row in table.iterrows() if row["recommended_source_variable_gap_count"] > 0
         },
-        "event_native_quality_by_product": {
-            str(row["product"]): row["native_flag_audit"]
+        "event_native_quality_by_event_product": {
+            f'{row["event_id"]}|{row["product"]}|{row["source"]}':
+                row["native_flag_audit"]
             for _, row in table.iterrows()
         },
         "segments_with_unflagged_zero": int(
@@ -1412,8 +1413,9 @@ def event_self_test():
             audited = audit_event_archives(target)
             assert audited["segments_with_during_epoch"] == 1
             assert audited["segments_with_skipped_variables"] == 1
-            assert audited["event_native_quality_by_product"]["spc-l3i"]["status"] == "audited"
-            assert audited["event_native_quality_by_product"]["spc-l3i"]["unflagged_zero"] == 4
+            assert len(audited["event_native_quality_by_event_product"]) == 1
+            assert next(iter(audited["event_native_quality_by_event_product"].values()))["status"] == "audited"
+            assert next(iter(audited["event_native_quality_by_event_product"].values()))["unflagged_zero"] == 4
             assert audited["segments_with_unflagged_zero"] == 1
     print("PASS: SWEAP event UTC windows, 120s context, grouped subsets, "
           "3D native arrays, fill masks, SPC nanosecond step times, "

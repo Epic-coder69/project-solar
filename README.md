@@ -211,6 +211,60 @@ names. Missing days, unavailable products, oversized downloads, and errors
 are reported explicitly rather than interpreted as zeros. It is a **survey**,
 not a validated quality/coverage audit of the 599 switchback candidates.
 
+## SWEAP FIELDS-event native extraction
+
+The single \`code/SWEAP/sweap_data_reader.py\` now offers
+\`--extract-events\`. This mode reads the FIELDS event catalog using
+\`event_start_utc\` and \`event_end_exclusive_utc\` (or inclusive
+\`event_end_utc + 1s\` when the exclusive field is absent), adds
+optional flanking context and preserves every available CDF variable's
+native shape without binning. It handles time axes separately, keeps
+fill values and quality flags unchanged, splits UTC-midnight crossings,
+and caches original daily CDFs or requests NASA-generated window
+subsets if daily data are too large.
+
+**Smoke test: just the first candidate and all 13 products**
+
+```bash
+git pull --ff-only origin main
+python project.py sweap --self-test
+python project.py sweap --extract-events \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --max-events 1 \
+  --before-seconds 10 --after-seconds 10 \
+  --max-file-mib 50 --max-total-mib 250 \
+  --event-out data/sweap/events
+```
+
+**All 599 candidate windows (intentional large, network-heavy operation):**
+
+```bash
+python project.py sweap --extract-events \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --before-seconds 10 --after-seconds 10 \
+  --max-file-mib 50 --max-total-mib 2048 \
+  --event-out data/sweap/events
+```
+
+Use \`--event-products spc-l3i,spi-proton-l3\` to restrict products,
+\`--max-events N\` for controlled batches, \`--no-resume\` for an
+explicit overwrite. Resume is on by default.
+
+For each event/product/day, outputs are an \`.npz\` native-array archive
+and adjacent \`.json\` metadata/status report; the overall
+\`event_manifest.csv\` and \`summary.json\` are also saved under
+\`data/sweap/events/\`. Source CDFs stay cached separately under
+\`data/sweap/\` and can be reopened to inspect full CDF attributes.
+Everything remains local and Git-ignored.
+
+**Scientific boundary:** \`EPOCH\` falling inside a FIELDS interval
+does not prove that a detector integration physically overlapped the
+event. Some distributions have ~28–60 s sampling and may yield zero
+time tags within a short window; that is *not* a zero flux measurement.
+This extractor preserves data but does not apply science-quality flags
+or calculate significant associations. Per-variable skipped/status
+reasons are always included rather than silently supplying fake data.
+
 ## Repository guide
 
 ```text

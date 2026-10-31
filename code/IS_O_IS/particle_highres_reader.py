@@ -28,17 +28,25 @@ from particle_data_reader import (
 )
 
 BASE_URL = 'https://spp-isois.sr.unh.edu/data_public/EPIHi/level2/'
-PRODUCTS = ('let1-rates10', 'let1-rates60', 'let1-rates300', 'het-rates10', 'second-rates')
+PRODUCTS = ('let1-rates10', 'let1-rates60', 'let1-rates300', 'let1-rates3600',
+            'let2-rates60', 'het-rates10', 'het-rates60', 'het-rates300',
+            'het-rates3600', 'second-rates')
 DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10', 'second-rates')
 FILE_RE = re.compile(
-    r'^psp_isois-epihi_l2-(let1-rates10|let1-rates60|let1-rates300|het-rates10|second-rates)_(\d{8})_v(\d+)\.cdf$', re.I
+    r'^psp_isois-epihi_l2-(' + '|'.join(map(re.escape, PRODUCTS)) +
+    r')_(\d{8})_v(\d+)\.cdf$', re.I
 )
 SCHEMA_VERSION = 2
 CHANNEL_GUIDE = {
     'let1-rates10': '10s LET1 H/He energy spectra; He is NOT the original Z6-28 heavy-ion channel',
     'let1-rates60': '60s LET1 species-resolved C, N, O, Ne, Mg, Si, Fe etc.; not identical to the combined Z6-28 summary channel',
     'let1-rates300': '300s LET1 CNO, Ne-Si, Fe-group measurements; not identical to A_Heavy_Rate_TS',
+    'let1-rates3600': '3600s LET1 A/B proton and heavy-element spectra; coarse background, not resolved switchbacks',
+    'let2-rates60': '60s LET2 C-side spectrum; different detector/view, not a LET1 gap replacement',
     'het-rates10': '10s HET H and electron energy spectra plus He',
+    'het-rates60': '60s HET rates/energy spectra where published; coarser event measurements',
+    'het-rates300': '300s HET spectra where published; event-scale, not 10s flanks',
+    'het-rates3600': '3600s HET A/B proton/electron spectra; coarse background, not resolved switchbacks',
     'second-rates': '1s LET1/LET2/HET proton/electron count rates and counts; no differential flux or species-resolved energy grid',
 }
 

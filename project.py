@@ -47,6 +47,8 @@ def help_text() -> None:
     print("""Project Solar — local Python entry point
 
   python project.py status               Check code and local data/report paths
+  python project.py cleanup              Preview duplicate folders/logs safely
+  python project.py cleanup --apply      Remove confirmed duplicates and logs
   python project.py test                 Run all eight offline synthetic self-tests
   python project.py coverage             Recalculate 599-event multires timing audit
   python project.py fine-coverage --help Inspect 10-second flank coverage options
@@ -77,6 +79,11 @@ def status() -> int:
         if not (ROOT / relative).is_file():
             print(f"  MISSING code for {label}: {relative}")
             bad = True
+    for old in ("code/M_FIELD", "code/IS_O_IS"):
+        if (ROOT / old).exists():
+            print(f"  LEGACY FOLDER {old} — preview: python project.py cleanup")
+    if (ROOT / "logs").exists():
+        print("  LOCAL LOGS logs/ — preview: python project.py cleanup")
     print("NOTE: MISSING local research files are not necessarily errors;")
     print("      data/ is Git-ignored and is not downloaded by git pull.")
     return 1 if bad else 0
@@ -112,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
             print("status takes no arguments", file=sys.stderr)
             return 2
         return status()
+    if command == "cleanup":
+        return subprocess.call(
+            [sys.executable, str(ROOT / "cleanup_local.py"), *args],
+            cwd=str(ROOT)
+        )
     if command == "test":
         if args:
             print("test takes no arguments", file=sys.stderr)

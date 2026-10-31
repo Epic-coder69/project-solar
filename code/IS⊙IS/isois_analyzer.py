@@ -1037,6 +1037,382 @@ def _multires_main(argv=None):
 
 
 # ---------------------------------------------------------------------------
+# Native-value plots centered on FIELDS switchback events (IS⊙IS only).
+# A plot shows exactly ONE source product per channel, never a fake composite.
+# ---------------------------------------------------------------------------
+def _plot_trace_from_npz(path, variable, *, left_ns, right_ns,
+                         energy_index=0, sector_index=0, verify_sha=True,
+                         verified=None):
+    """Return valid native integration records, preserving their full widths.
+
+    Select an explicit energy/sector bin instead of averaging incompatible
+    energy channels or field-of-view sectors. Missing/fill data stay missing.
+    """
+    manifest_path = Path(str(path) + '.manifest.json')
+    manifest = json.loads(manifest_path.read_text())
+    metadata = manifest.get('variables', {}).get(variable)
+    if metadata is None:
+        return None
+    if verified is not None and path in verified:
+        if not verified[path]:
+            raise ValueError(f'Previously rejected NPZ checksum: {path}')
+    elif verify_sha:
+        ok = manifest.get('output_sha256') == _sha256(path)
+        if verified is not None:
+            verified[path] = ok
+        if not ok:
+            raise ValueError(f'NPZ checksum disagrees with manifest: {path}')
+    with np.load(path, allow_pickle=False) as data:
+        if variable not in data:
+            raise ValueError(f'{path.name}: {variable} in manifest but absent in NPZ')
+        start = np.asarray(data['integration_start_utc_ns'], dtype=np.int64)
+        end = np.asarray(data['integration_end_utc_ns'], dtype=np.int64)
+        if start.ndim != 1 or end.shape != start.shape or np.any(end <= start):
+            raise ValueError(f'{path.name}: invalid integration timestamps')
+        inside = (start < right_ns) & (end > left_ns)
+        if not np.any(inside):
+            return None
+        shape = data[variable].shape
+        if len(shape) not in (1, 2, 3) or shape[0] != len(start):
+            raise ValueError(f'{path.name}: unexpected {variable} shape {shape}')
+        if len(shape) >= 2 and energy_index >= shape[1]:
+            return None
+        if len(shape) >= 3 and sector_index >= shape[2]:
+            return None
+        selection = (inside,)
+        if len(shape) >= 2:
+            selection += (energy_index,)
+        if len(shape) >= 3:
+            selection += (sector_index,)
+        values = np.asarray(data[variable][selection], dtype=float)
+        if variable + '__valid_numeric' in data:
+            mask = np.asarray(data[variable + '__valid_numeric'][selection],
+                              dtype=bool)
+        else:
+            mask = np.isfinite(values)
+        valid = mask & np.isfinite(values)
+    if not np.any(valid):
+        return None
+    kind = 'differential flux' if variable.endswith('_Flux') else 'count rate'
+    return {
+        'records': [(int(a), int(b), float(y)) for a, b, y in
+                    zip(start[inside][valid], end[inside][valid], values[valid])],
+        'variable': variable,
+        'units': str(metadata.get('units', 'source units')),
+        'kind': kind,
+        'axes': ('bin ' + str(energy_index) if len(shape) >= 2 else 'scalar') +
+                (', sector ' + str(sector_index) if len(shape) >= 3 else ''),
+    }
+
+
+def _plot_trace_from_summary(frame, name, *, left_ns, right_ns):
+    """Read *values* from hourly survey CSV; no hourly-to-second upsampling."""
+    if frame is None:
+        return None
+    group = frame.loc[frame['variable'] == name]
+    if group.empty:
+        return None
+    valid = group['valid_measurement'].astype(str).str.lower().isin(
+        ('true', '1', 'yes'))
+    group = group.loc[valid].copy()
+    if group.empty:
+        return None
+    start = pd.DatetimeIndex(
+        pd.to_datetime(group['integration_start_utc'], utc=True)).as_unit('ns').asi8
+    end = pd.DatetimeIndex(
+        pd.to_datetime(group['integration_end_utc'], utc=True)).as_unit('ns').asi8
+    values = pd.to_numeric(group['value'], errors='coerce').to_numpy(float)
+    mask = ((start < right_ns) & (end > left_ns) &
+            (end > start) & np.isfinite(values))
+    if not mask.any():
+        return None
+    records = [(int(a), int(b), float(y)) for a, b, y in
+               zip(start[mask], end[mask], values[mask])]
+    units = group.loc[mask, 'units'].dropna().unique()
+    if len(units) != 1:
+        raise ValueError(f'Summary {name}: inconsistent or absent units')
+    return {'records': records, 'variable': name, 'units': str(units[0]),
+            'kind': 'survey count rate', 'axes': 'summary aggregate'}
+
+
+def _plot_pick(event, channel, inventory, summary, *, energy_index,
+               sector_index, verify_sha=True, verified=None):
+    """Use fastest real, valid, overlapping channel values; no product mixing."""
+    left = _utc(event.window_start_utc).value
+    right = _utc(event.window_end_exclusive_utc).value
+    sources = CHANNELS[channel]
+    for product in sorted((p for p in sources if p != 'summary'),
+                          key=lambda p: PRODUCT_CADENCE[p]):
+        for variable in sources[product]:
+            records, units, axis = [], None, None
+            for path in inventory.get(product, []):
+                manifest = json.loads(Path(str(path) + '.manifest.json').read_text())
+                if variable not in manifest.get('variables', {}):
+                    continue
+                partial = _plot_trace_from_npz(
+                    path, variable, left_ns=left, right_ns=right,
+                    energy_index=energy_index, sector_index=sector_index,
+                    verify_sha=verify_sha, verified=verified)
+                if partial is None:
+                    continue
+                if units is not None and units != partial['units']:
+                    raise ValueError(
+                        f'{channel} {product}: source units changed between CDF days')
+                units, axis = partial['units'], partial['axes']
+                records.extend(partial['records'])
+            if records:
+                records = sorted(set(records), key=lambda x: (x[0], x[1]))
+                return {'channel': channel, 'product': product, 'variable': variable,
+                        'units': units, 'axes': axis,
+                        'kind': ('differential flux' if variable.endswith('_Flux')
+                                 else 'count rate'),
+                        'records': records}
+    if 'summary' in sources:
+        variable = sources['summary'][0]
+        trace = _plot_trace_from_summary(
+            summary, variable, left_ns=left, right_ns=right)
+        if trace is not None:
+            return {'channel': channel, 'product': 'summary', **trace}
+    return None
+
+
+def _plot_events_self_test():
+    """Offline tests: numeric masks, native timing, non-interpolation and bins."""
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from contextlib import redirect_stdout
+    import io
+    start = _utc('2018-11-06T00:00:00Z').value
+    with TemporaryDirectory() as folder:
+        root = Path(folder)
+        product_dir = root / 'let1-rates300'
+        product_dir.mkdir()
+        source = product_dir / 'psp_isois-epihi_l2-let1-rates300_20181106_v26.npz'
+        v = np.array([[[4., 8.], [12., -1e31]],
+                      [[5., 9.], [13., 15.]]])
+        mask = np.ones(v.shape, dtype=bool)
+        mask[0, 1, 1] = False
+        np.savez_compressed(
+            source,
+            integration_start_utc_ns=np.array([start, start + 300*NS]),
+            integration_end_utc_ns=np.array([start + 300*NS, start + 600*NS]),
+            R26A_CNO_SECT_Rate=v,
+            R26A_CNO_SECT_Rate__valid_numeric=mask)
+        Path(str(source) + '.manifest.json').write_text(json.dumps({
+            'output_sha256': _sha256(source),
+            'variables': {'R26A_CNO_SECT_Rate': {'units': 'counts/s'}}}))
+        first = _plot_trace_from_npz(
+            source, 'R26A_CNO_SECT_Rate', left_ns=start,
+            right_ns=start + 350*NS, energy_index=0, sector_index=1)
+        assert [x[2] for x in first['records']] == [8., 9.]
+        assert first['records'][0][1]-first['records'][0][0] == 300*NS
+        other = _plot_trace_from_npz(
+            source, 'R26A_CNO_SECT_Rate', left_ns=start,
+            right_ns=start + 350*NS, energy_index=1, sector_index=1)
+        assert [x[2] for x in other['records']] == [15.]
+        assert _plot_trace_from_npz(
+            source, 'R26A_CNO_SECT_Rate', left_ns=start + 800*NS,
+            right_ns=start + 900*NS) is None
+        event = SimpleNamespace(
+            event_id='synthetic',
+            window_start_utc=_utc('2018-11-06T00:00:00Z'),
+            window_end_exclusive_utc=_utc('2018-11-06T00:11:00Z'))
+        inv = _inventory(root, HIGHR_PRODUCTS)
+        selected = _plot_pick(event, 'LET1_R26A_CNO', inv, None,
+                              energy_index=0, sector_index=1)
+        assert selected['product'] == 'let1-rates300'
+        assert len(selected['records']) == 2
+        assert _plot_pick(event, 'LET1_A_H', inv, None,
+                          energy_index=0, sector_index=0) is None
+        csv = pd.DataFrame([{
+            'variable': 'A_H_Rate_TS',
+            'valid_measurement': True, 'value': 2.5,
+            'units': 'counts/s',
+            'integration_start_utc': '2018-11-05T23:30:00Z',
+            'integration_end_utc': '2018-11-06T00:30:00Z'}])
+        summary_trace = _plot_trace_from_summary(
+            csv, 'A_H_Rate_TS', left_ns=start, right_ns=start + 20*NS)
+        assert summary_trace['records'][0][1] - summary_trace['records'][0][0] == 3600*NS
+        assert summary_trace['records'][0][2] == 2.5
+    print('PASS: event plot native measurements, masked bins, no interpolation, '
+          'separate sources and hourly context')
+
+
+def _plot_events_main(argv=None):
+    """Create a small batch of standalone PNG graphs from cached IS⊙IS values."""
+    p = argparse.ArgumentParser(
+        description='Plot actual IS⊙IS native-rate/flux integrations at FIELDS switchbacks')
+    p.add_argument('--events-csv', type=Path, default=Path(
+        'data/full_analysis_nov_dec_2018_candidates_strong_events.csv'))
+    p.add_argument('--input-dir', type=Path, default=Path('data/isois/highres'))
+    p.add_argument('--summary-csv', type=Path,
+                   default=Path('data/isois/fields_event_summary_rates.csv'))
+    p.add_argument('--output-dir', type=Path, default=Path('data/isois/plots'))
+    p.add_argument('--event-id', action='append', dest='event_ids',
+                   help='Plot this FIELDS event ID; repeat flag to plot several')
+    p.add_argument('--max-events', type=int, default=4,
+                   help='Number of automatically selected events (default 4)')
+    p.add_argument('--channels', nargs='+', choices=tuple(CHANNELS),
+                   default=['LET1_A_H','HET_A_H','HET_A_Electrons',
+                            'LET1_R26A_CNO'],
+                   help='Independent IS⊙IS channels, one panel each')
+    p.add_argument('--before-seconds', type=float, default=10)
+    p.add_argument('--after-seconds', type=float, default=10)
+    p.add_argument('--energy-index', type=int, default=0)
+    p.add_argument('--sector-index', type=int, default=0)
+    p.add_argument('--list-events', action='store_true',
+                   help='Print first 20 FIELDS event IDs and times without plotting')
+    p.add_argument('--no-verify-sha', action='store_true')
+    p.add_argument('--self-test', action='store_true')
+    args = p.parse_args(argv)
+    if args.self_test:
+        return _plot_events_self_test()
+    if args.max_events < 1 or args.max_events > 50:
+        p.error('--max-events must be from 1 to 50')
+    if (min(args.energy_index, args.sector_index) < 0
+        or not np.isfinite(args.before_seconds)
+        or not np.isfinite(args.after_seconds)
+        or min(args.before_seconds, args.after_seconds) < 0):
+        p.error('Require nonnegative indices and finite, nonnegative padding')
+    events = validate_fields_events(args.events_csv)
+    windows = build_event_windows(
+        events, before_minutes=args.before_seconds/60,
+        after_minutes=args.after_seconds/60)
+    if args.list_events:
+        for w in windows.head(20).itertuples(index=False):
+            print(f'{w.event_id}: {w.event_start_utc} to {w.event_end_exclusive_utc}')
+        return
+    if args.event_ids:
+        requested = list(dict.fromkeys(args.event_ids))
+        found = windows.loc[windows['event_id'].isin(requested)]
+        missing = set(requested) - set(found['event_id'])
+        if missing:
+            p.error(f'Unknown event IDs: {sorted(missing)}')
+        selected = found
+    else:
+        # Prioritize candidates with actual fine HET proton measurements.
+        report = args.input_dir / 'multires_best_per_event_channel.csv'
+        preferred = []
+        if report.is_file():
+            scores = pd.read_csv(report)
+            required = {'event_id', 'channel', 'best_tier'}
+            if required.issubset(scores.columns):
+                preferred = scores.loc[
+                    (scores['channel'] == 'HET_A_H') &
+                    (scores['best_tier'] == 'fine_event_and_flanks'),
+                    'event_id'].astype(str).tolist()
+        ids = (list(dict.fromkeys(preferred +
+              windows['event_id'].astype(str).tolist())))[:args.max_events])
+        selected = windows.set_index('event_id').loc[ids].reset_index()
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+    except ImportError as exc:
+        raise SystemExit(
+            'PNG plotting requires matplotlib in your active environment; '
+            'install with: python -m pip install matplotlib') from exc
+    from datetime import datetime, timezone
+    import re
+    def as_date(ns):
+        return datetime.fromtimestamp(int(ns)/NS, tz=timezone.utc)
+    inv = _inventory(args.input_dir, HIGHR_PRODUCTS)
+    summary = None
+    if args.summary_csv.is_file():
+        summary = pd.read_csv(args.summary_csv)
+        columns = {'variable','integration_start_utc',
+                   'integration_end_utc','valid_measurement','value','units'}
+        if columns - set(summary):
+            p.error(f'Summary CSV missing {columns - set(summary)}')
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    metadata = []
+    verified = {}
+    for ix, ev in enumerate(selected.itertuples(index=False), start=1):
+        event_start = _utc(ev.event_start_utc).value
+        event_end = _utc(ev.event_end_exclusive_utc).value
+        window_start = _utc(ev.window_start_utc).value
+        window_end = _utc(ev.window_end_exclusive_utc).value
+        fig, axes = plt.subplots(
+            len(args.channels), 1,
+            figsize=(13, max(3.0*len(args.channels), 4.0)),
+            sharex=True, squeeze=False)
+        for channel, ax in zip(args.channels, axes[:,0]):
+            trace = _plot_pick(
+                ev, channel, inv, summary, energy_index=args.energy_index,
+                sector_index=args.sector_index,
+                verify_sha=not args.no_verify_sha, verified=verified)
+            ax.axvspan(as_date(event_start), as_date(event_end),
+                       color='goldenrod', alpha=.18, label='FIELDS switchback')
+            ax.axvline(as_date(event_start), color='gray', ls=':', lw=1)
+            ax.axvline(as_date(event_end), color='gray', ls=':', lw=1)
+            ax.set_ylabel(channel, fontsize=9)
+            ax.grid(alpha=.18)
+            if trace is not None:
+                records = trace['records']
+                ax.hlines(
+                    [v for _,_,v in records],
+                    [as_date(t) for t,_,_ in records],
+                    [as_date(t) for _,t,_ in records],
+                    color='tab:blue', linewidth=2)
+                ax.plot([as_date(t+(u-t)//2) for t,u,_ in records],
+                        [v for _,_,v in records], 'o',
+                        color='tab:blue', markersize=2.5)
+                widths = sorted({round((b-a)/NS, 3) for a,b,_ in records})
+                label = (f'{trace["product"]} | {trace["variable"]} '
+                         f'| {trace["axes"]} | {trace["units"]}'
+                         f' | integration {widths} s')
+                ax.set_title(label, loc='left', fontsize=9)
+                metadata.append({
+                    'event_id': str(ev.event_id), 'channel': channel,
+                    'product': trace['product'], 'variable': trace['variable'],
+                    'units': trace['units'], 'axes': trace['axes'],
+                    'valid_integrations_plotted': len(records),
+                    'integration_seconds_observed': widths,
+                    'png': None})
+            else:
+                ax.text(.5, .5, 'No valid saved IS⊙IS values in this window',
+                        transform=ax.transAxes, ha='center', va='center')
+                metadata.append({
+                    'event_id': str(ev.event_id), 'channel': channel,
+                    'product': '', 'variable': '', 'units': '', 'axes': '',
+                    'valid_integrations_plotted': 0,
+                    'integration_seconds_observed': [], 'png': None})
+            ax.set_xlim(as_date(window_start), as_date(window_end))
+        axes[-1,0].xaxis.set_major_formatter(mdates.DateFormatter(
+            '%H:%M:%S', tz=timezone.utc))
+        axes[-1,0].set_xlabel('UTC time — horizontal segments are native integration intervals')
+        fig.suptitle(
+            f'Parker Solar Probe IS⊙IS | switchback {ev.event_id}\n'
+            f'{ev.event_start_utc} to {ev.event_end_exclusive_utc} UTC',
+            fontsize=12)
+        fig.text(.5, .007,
+                 'Shading: FIELDS event. No interpolation or cross-product averaging. '
+                 'Quality flags and statistical significance not assessed.',
+                 ha='center', fontsize=8)
+        fig.tight_layout(rect=(0, .025, 1, .93))
+        slug = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(ev.event_id))[:55]
+        out = args.output_dir / f'{ix:02d}_isois_switchback_{slug}.png'
+        fig.savefig(out, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        for record in metadata:
+            if record['event_id'] == str(ev.event_id) and record['png'] is None:
+                record['png'] = str(out)
+        print(f'[PLOT {ix}/{len(selected)}] {out}', flush=True)
+    _atomic_text(args.output_dir/'plot_events_manifest.json',
+                 json.dumps({
+                     'purpose': 'Native IS⊙IS measurements at FIELDS switchbacks',
+                     'interpretation': 'Visualization only; neither particle quality nor acceleration assessed',
+                     'selected_energy_index': args.energy_index,
+                     'selected_sector_index': args.sector_index,
+                     'before_seconds': args.before_seconds,
+                     'after_seconds': args.after_seconds,
+                     'plots': metadata}, indent=2) + '\n')
+    print(f'[SAVED] {len(selected)} PNG graphs and plot_events_manifest.json')
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Unified public analysis CLI (all algorithms are implemented above)
 # ---------------------------------------------------------------------------
 def _default_coverage_args(mode, args):
@@ -1061,6 +1437,7 @@ def self_test():
     _survey_self_test()
     _fine_self_test()
     _multires_self_test()
+    _plot_events_self_test()
     assert _default_coverage_args("coverage", ["--self-test"]) == ["--self-test"]
     assert _default_coverage_args("coverage", ["--events-csv=custom.csv"])[:1] == [
         "--events-csv=custom.csv"]
@@ -1070,6 +1447,7 @@ def self_test():
 def help_text():
     print("""IS⊙IS analysis — all analysis logic lives in this one Python file
 
+  python project.py isois-analyzer plot-events [options]
   python project.py isois-analyzer coverage [options]
   python project.py isois-analyzer fine-coverage [options]
   python project.py isois-analyzer survey --rates-csv FILE --events-csv FILE
@@ -1091,6 +1469,8 @@ def main(argv=None):
         self_test()
         return
     mode, *args = argv
+    if mode == "plot-events":
+        return _plot_events_main(args)
     if mode == "coverage":
         return _multires_main(_default_coverage_args(mode, args))
     if mode == "fine-coverage":
@@ -1102,7 +1482,7 @@ def main(argv=None):
             return _survey_main()
         finally:
             sys.argv = original
-    raise SystemExit(f"Unknown analysis mode {mode!r}; choose coverage, fine-coverage or survey")
+    raise SystemExit(f"Unknown analysis mode {mode!r}; choose plot-events, coverage, fine-coverage or survey")
 
 
 if __name__ == "__main__":

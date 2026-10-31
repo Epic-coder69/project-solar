@@ -582,6 +582,301 @@ def self_test():
           "3D one-record sampling, strict download budgets, and NASA time-subset request")
 
 
+
+# --- FIELDS-driven native SWEAP event extraction --------------------------
+
+def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10):
+    """Read exact FIELDS half-open event intervals, with optional UTC flanks."""
+    import hashlib
+    frame = pd.read_csv(path, dtype={"event_id": str})
+    required = {"event_start_utc", "event_end_utc"}
+    if not required.issubset(frame):
+        raise ValueError("FIELDS CSV missing " + ", ".join(sorted(required - set(frame.columns))))
+    if frame.empty:
+        raise ValueError("FIELDS event CSV contains no events")
+    if max_events:
+        frame = frame.iloc[:max_events]
+    result = []
+    for i, row in frame.iterrows():
+        start = utc(row["event_start_utc"])
+        if "event_end_exclusive_utc" in frame and pd.notna(row["event_end_exclusive_utc"]):
+            end = utc(row["event_end_exclusive_utc"])
+        else:
+            # FIELDS event_end_utc marks the inclusive one-second magnetic bin.
+            end = utc(row["event_end_utc"]) + pd.Timedelta(seconds=1)
+        if end <= start:
+            raise ValueError(f"FIELDS event row {i}: exclusive end must follow start")
+        event_id = (str(row["event_id"]) if "event_id" in frame
+                    and pd.notna(row["event_id"]) else f"row_{i+1}")
+        begin = start - pd.Timedelta(seconds=before_seconds)
+        stop = end + pd.Timedelta(seconds=after_seconds)
+        # No user-provided event ID appears in output paths (path traversal safe).
+        key = hashlib.sha256(f"{event_id}|{start.isoformat()}|{end.isoformat()}".encode()).hexdigest()[:16]
+        result.append({"event_id": event_id, "event_key": key,
+                       "event_start_utc": start.isoformat(),
+                       "event_end_exclusive_utc": end.isoformat(),
+                       "window_start_utc": begin.isoformat(),
+                       "window_end_exclusive_utc": stop.isoformat()})
+    return result
+
+
+def split_utc_days(begin, stop):
+    """Split [begin,stop) at UTC midnight with no duplicated boundaries."""
+    a, b = utc(begin), utc(stop)
+    while a < b:
+        next_stop = min(b, a.floor("D") + pd.Timedelta(days=1))
+        yield a.date(), a, next_stop
+        a = next_stop
+
+
+def native_event_slice(cdf, begin, stop, max_variable_mib=128):
+    """Extract native CDF records from all variables with provable time axes.
+
+    Preserves multidimensional arrays, detector flags and fill values.
+    Never interpolates, rebins, averages or substitutes missing records.
+    """
+    import cdflib
+    info = cdf.cdf_info()
+    names = list(info.zVariables) + list(info.rVariables)
+    lookup = {n.lower(): n for n in names}
+    timestamps = {}
+    for name in names:
+        if not name.lower().startswith("epoch"):
+            continue
+        try:
+            raw = cdf.varget(name)
+            times = cdflib.cdfepoch.to_datetime(raw)
+            timestamps[name] = pd.DatetimeIndex(pd.to_datetime(times, utc=True))
+        except (ValueError, TypeError, OverflowError):
+            continue
+    if not timestamps:
+        raise ValueError("CDF has no readable UTC Epoch/Epoch* axis")
+    result = {"source_variable_count": len(names), "variables": {}, "errors": {},
+              "time_axes": {}, "unassigned_record_varying": [],
+              "full_native_arrays": True}
+    selections = {}
+    left, right = utc(begin), utc(stop)
+    for name, times in timestamps.items():
+        ids = np.flatnonzero((times >= left) & (times < right))
+        selections[name] = ids
+        spacing = (np.diff(times[ids].as_unit("ns").asi8) / 1e9
+                   if len(ids) > 1 else np.array([]))
+        result["time_axes"][name] = {
+            "records_in_window": int(len(ids)), "file_records": int(len(times)),
+            "median_epoch_step_s": float(np.median(spacing)) if len(spacing) else None,
+            "max_epoch_gap_s": float(np.max(spacing)) if len(spacing) else None,
+            "first_utc": times[ids[0]].isoformat() if len(ids) else None,
+            "last_utc": times[ids[-1]].isoformat() if len(ids) else None}
+    arrays = {}
+    max_bytes = int(max_variable_mib * 1048576)
+    for name in names:
+        try:
+            var = cdf.varinq(name)
+            attrs = cdf.varattsget(name)
+            varying = bool(var.Rec_Vary)
+            nrecords = int(var.Last_Rec) + 1
+            dep = str(attrs.get("DEPEND_0", "")).strip()
+            if dep not in timestamps:
+                dep = lookup.get(dep.lower(), dep)
+            inferred = False
+            if not varying:
+                rowids = None
+            else:
+                if dep not in timestamps:
+                    candidates = [ax for ax, times in timestamps.items()
+                                  if len(times) == nrecords]
+                    if len(candidates) == 1:
+                        dep = candidates[0]
+                        inferred = True
+                    else:
+                        result["unassigned_record_varying"].append(name)
+                        result["variables"][name] = {
+                            "status": "skipped_unresolved_time_axis",
+                            "rec_vary": True, "depend_0": dep,
+                            "records": nrecords}
+                        continue
+                rowids = selections[dep]
+                if not len(rowids):
+                    result["variables"][name] = {
+                        "status": "zero_records_in_window",
+                        "rec_vary": True, "depend_0": dep}
+                    continue
+                if int(rowids[-1]) >= nrecords:
+                    result["variables"][name] = {
+                        "status": "skipped_inconsistent_time_axis",
+                        "rec_vary": True, "depend_0": dep,
+                        "records": nrecords}
+                    continue
+            if varying:
+                lo, hi = int(rowids[0]), int(rowids[-1])
+                slab = np.asarray(cdf.varget(name, startrec=lo, endrec=hi))
+                slab = slab[(rowids - lo).astype(int)]
+            else:
+                slab = np.asarray(cdf.varget(name))
+            if slab.nbytes > max_bytes:
+                result["variables"][name] = {
+                    "status": "skipped_variable_size_limit",
+                    "bytes": int(slab.nbytes), "max_bytes": max_bytes}
+                continue
+            if slab.dtype.kind == "O":
+                # NPZ files must never require pickle. Plain string objects
+                # are safe to convert to Unicode; others are explicitly omitted.
+                if any(not isinstance(v, (str, bytes)) for v in slab.ravel()):
+                    result["variables"][name] = {"status": "skipped_object_dtype"}
+                    continue
+                slab = slab.astype(str)
+            arrays[name] = slab
+            result["variables"][name] = {
+                "status": "saved", "rec_vary": varying,
+                "depend_0": dep if varying else None,
+                "time_axis_inferred": inferred,
+                "shape": list(slab.shape), "dtype": str(slab.dtype),
+                "units": str(attrs.get("UNITS", "")),
+                "catdesc": str(attrs.get("CATDESC", ""))[:200],
+                "fillval": str(attrs.get("FILLVAL", "")),
+                "bytes": int(slab.nbytes)}
+        except (ValueError, OSError, TypeError, IndexError, AttributeError) as exc:
+            result["variables"][name] = {
+                "status": "read_error", "reason": f"{type(exc).__name__}: {exc}"}
+            result["errors"][name] = f"{type(exc).__name__}: {exc}"
+    result["saved_variables"] = sum(v["status"] == "saved"
+                                    for v in result["variables"].values())
+    result["not_saved_variables"] = len(names) - result["saved_variables"]
+    result["any_records_in_window"] = any(len(v) for v in selections.values())
+    return result, arrays
+
+
+def event_source(product, day, start, stop, cache, state, budget, file_mib):
+    """Reuse a daily CDF when small, else request a NASA time subset."""
+    key = (product, str(day))
+    if key not in state:
+        try:
+            found = available_file(product, day, cache)
+            if found["status"] == "found":
+                status, used = bounded_download(found["url"], found["path"],
+                                                int(file_mib * 1048576), budget[0])
+                budget[0] -= used
+                found["status"] = status
+                if status == "skipped_size_budget":
+                    found["reason"] = "daily_file_exceeds_budget"
+            state[key] = found
+        except (requests.RequestException, OSError, ValueError) as exc:
+            state[key] = {"status": "error", "reason": str(exc)}
+    source = state[key]
+    if source["status"] in ("cached", "downloaded"):
+        return source
+    if source["status"] != "skipped_size_budget":
+        return source
+    if budget[0] <= 0:
+        return {"status": "skipped_total_size_budget"}
+    try:
+        minutes = float((stop - start) / pd.Timedelta(minutes=1))
+        subset = subset_for_window(product, day, cache, start.isoformat(), minutes)
+        if subset["status"] == "found":
+            status, used = bounded_download(subset["url"], subset["path"],
+                                            int(file_mib * 1048576), budget[0])
+            budget[0] -= used
+            subset["status"] = status
+        return subset
+    except (requests.RequestException, OSError, ValueError) as exc:
+        return {"status": "error", "reason": str(exc)}
+
+
+def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
+                   before_seconds=10, after_seconds=10,
+                   max_file_mib=50, max_total_mib=2048,
+                   max_variable_mib=128, resume=True):
+    """Write all available native measurements plus an explicit coverage manifest."""
+    import cdflib
+    events = load_event_intervals(csv_path, max_events, before_seconds, after_seconds)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    budget = [int(max_total_mib * 1048576)]
+    daily_state = {}
+    rows = []
+    print(f"[SWEAP EVENTS] {len(events)} FIELDS candidates; {len(products)} NASA products; "
+          f"flanks {before_seconds}/{after_seconds}s", flush=True)
+    for product in products:
+        for event in events:
+            for day, begin, end in split_utc_days(event["window_start_utc"],
+                                                  event["window_end_exclusive_utc"]):
+                path = (output_dir / product /
+                        f"{event['event_key']}_{day:%Y%m%d}_{begin:%H%M%S%f}.npz")
+                meta_path = path.with_suffix(".json")
+                row = {**event, "product": product, "dataset": CATALOG[product][1],
+                       "day": day.isoformat(),
+                       "segment_start_utc": begin.isoformat(),
+                       "segment_end_exclusive_utc": end.isoformat(),
+                       "archive": str(path), "metadata": str(meta_path)}
+                if resume and path.is_file() and meta_path.is_file():
+                    try:
+                        prior = json.loads(meta_path.read_text(encoding="utf-8"))
+                        if prior.get("status") == "saved":
+                            row.update({"status": "resumed",
+                                        "saved_variables": prior.get("saved_variables", 0),
+                                        "records_primary_epoch": prior.get("records_primary_epoch", 0)})
+                            rows.append(row)
+                            continue
+                    except (OSError, ValueError):
+                        pass
+                src = event_source(product, day, begin, end, cache, daily_state,
+                                   budget, max_file_mib)
+                row["source_status"] = src["status"]
+                row["source_file"] = src.get("path")
+                row["source_url"] = src.get("url")
+                row["source_kind"] = src.get("mode", "original_daily_cdf")
+                if src["status"] not in ("cached", "downloaded"):
+                    row.update(status="no_source", reason=src.get("reason", src["status"]))
+                else:
+                    try:
+                        report, arrays = native_event_slice(
+                            cdflib.CDF(str(src["path"])), begin, end, max_variable_mib)
+                        row["saved_variables"] = report["saved_variables"]
+                        primary = next((n for n in report["time_axes"] if n.lower() == "epoch"),
+                                       next(iter(report["time_axes"])))
+                        row["records_primary_epoch"] = report["time_axes"][primary]["records_in_window"]
+                        row["status"] = ("saved" if report["any_records_in_window"]
+                                         else "no_epoch_records")
+                        row["not_saved_variables"] = report["not_saved_variables"]
+                        row["read_errors"] = len(report["errors"])
+                        row["unassigned_time_variables"] = report["unassigned_record_varying"]
+                        if row["status"] == "saved":
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            tmp = path.with_suffix(".part.npz")
+                            try:
+                                np.savez_compressed(tmp, **arrays)
+                                tmp.replace(path)
+                            finally:
+                                tmp.unlink(missing_ok=True)
+                        row["variable_details"] = report
+                    except (ValueError, OSError, TypeError, IndexError, AttributeError) as exc:
+                        row.update(status="read_error",
+                                   reason=f"{type(exc).__name__}: {exc}")
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.write_text(json.dumps(row, indent=2, default=str) + "\n",
+                                     encoding="utf-8")
+                rows.append({k: v for k, v in row.items() if k != "variable_details"})
+        totals = pd.Series([r["status"] for r in rows if r["product"] == product]).value_counts().to_dict()
+        print(f"[SWEAP PRODUCT] {product}: {totals}", flush=True)
+    manifest = output_dir / "event_manifest.csv"
+    pd.DataFrame(rows).to_csv(manifest, index=False)
+    summary = {
+        "events_requested": len(events), "products_requested": len(products),
+        "segments": len(rows),
+        "status_counts": pd.Series([r["status"] for r in rows]).value_counts().to_dict(),
+        "bytes_downloaded": int(max_total_mib * 1048576) - budget[0],
+        "event_source_csv": str(csv_path), "manifest_csv": str(manifest),
+        "notes": [
+            "Native CDF records and dimensions preserved without resampling.",
+            "Epoch time within an event does not establish measurement exposure overlap.",
+            "Unaligned variables and read errors are listed explicitly.",
+            "Saved records may include fill values and flags; none are assumed science-valid."]}
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n",
+                                               encoding="utf-8")
+    print(f"[SWEAP EVENTS SAVED] {summary['status_counts']}\n[MANIFEST] {manifest}",
+          flush=True)
+    return summary
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")

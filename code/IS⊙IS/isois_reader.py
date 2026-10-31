@@ -879,12 +879,12 @@ EPIHI_SCHEMA_VERSION = 2
 EPIHI_CHANNEL_GUIDE = {
     'let1-rates10': '10s LET1 H/He energy spectra; He is NOT the original Z6-28 heavy-ion channel',
     'let1-rates60': '60s LET1 species-resolved C, N, O, Ne, Mg, Si, Fe etc.; not identical to the combined Z6-28 summary channel',
-    'let1-rates300': '300s LET1 CNO, Ne-Si, Fe-group measurements; not identical to A_Heavy_Rate_TS',
+    'let1-rates300': '300s LET1 R1/R26 A/B CNO, Ne-Si and Fe-group SECTORED COUNT RATES (not differential flux; not Z6-28 summary)',
     'let1-rates3600': '3600s LET1 A/B proton and heavy-element spectra; coarse background, not resolved switchbacks',
     'let2-rates60': '60s LET2 C-side spectrum; different detector/view, not a LET1 gap replacement',
     'het-rates10': '10s HET H and electron energy spectra plus He',
     'het-rates60': '60s HET rates/energy spectra where published; coarser event measurements',
-    'het-rates300': '300s HET spectra where published; event-scale, not 10s flanks',
+    'het-rates300': '300s HET A/B CNO, Ne-Si and Fe-group SECTORED COUNT RATES (not differential flux)',
     'het-rates3600': '3600s HET A/B proton/electron spectra; coarse background, not resolved switchbacks',
     'second-rates': '1s LET1/LET2/HET proton/electron count rates and counts; no differential flux or species-resolved energy grid',
 }
@@ -1050,6 +1050,10 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
                 raise ValueError(f'{name}: expected count rate units, received {units!r}')
         measurement_class = 'counts_and_count_rates_only'
     elif product in ('let1-rates300', 'het-rates300'):
+        if flux_names:
+            raise ValueError(
+                f'{product}: unexpected differential flux variables '
+                f'{flux_names}; review product calibration before decoding')
         # Official 300s LET1/HET products provide directional heavy-ion
         # sectored count rates (s^-1), not calibrated differential flux.
         pattern = (

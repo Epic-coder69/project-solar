@@ -825,6 +825,248 @@ def bundle_event_audit(directory):
     return archive
 
 
+
+# --- Source vs server-subset recovery without fabricated instrument axes ---
+
+def cdas_variable_inventory(product):
+    """Ask NASA for the dataset-wide variable catalog, not a day's data."""
+    dataset = CATALOG[product][1]
+    url = f"{CDAS}/{dataset}/variables"
+    response = requests.get(url, timeout=(20, 90),
+                            headers={"Accept": "application/json"})
+    response.raise_for_status()
+    payload = response.json()
+    root = payload.get("Variables", payload)
+    rows = (root.get("VariableDescription", root.get("Variable", []))
+            if isinstance(root, dict) else root)
+    if isinstance(rows, dict):
+        rows = [rows]
+    names = []
+    for row in rows or []:
+        if isinstance(row, dict):
+            name = row.get("Name") or row.get("name") or row.get("Id") or row.get("id")
+            if isinstance(name, str):
+                names.append(name)
+    return {"status": "listed" if names else "unrecognized_response",
+            "dataset": dataset, "url": url, "variable_names": names,
+            "variable_count": len(names)}
+
+
+def compare_variable_inventories(subset_names, original_names, recommended=()):
+    """Compare independently sourced inventories without assuming equivalence."""
+    subset = {str(n).lower(): str(n) for n in subset_names}
+    original = {str(n).lower(): str(n) for n in original_names}
+    missing = [original[k] for k in sorted(original.keys() - subset.keys())]
+    additional = [subset[k] for k in sorted(subset.keys() - original.keys())]
+    expected_missing = [n for n in recommended if n.lower() not in subset]
+    recovered = [n for n in recommended if n.lower() in original
+                 and n.lower() not in subset]
+    unavailable = [n for n in recommended if n.lower() not in original]
+    return {"subset_variable_count": len(subset),
+            "original_variable_count": len(original),
+            "original_only": missing,
+            "subset_only": additional,
+            "expected_missing_from_subset": expected_missing,
+            "expected_recoverable_from_original": recovered,
+            "expected_absent_from_original": unavailable}
+
+
+def request_targeted_native_subset(product, begin, stop, variable_names, cache):
+    """Request only named NASA variables (plus required time axes), at native cadence."""
+    import hashlib
+    from urllib.parse import quote
+    names = list(dict.fromkeys(variable_names))
+    if not names or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) for n in names):
+        raise ValueError("Targeted NASA variable names must be nonempty CDF identifiers")
+    begin, stop = utc(begin), utc(stop)
+    lo, hi = begin.floor("s"), stop.ceil("s")
+    label = lambda t: t.strftime("%Y%m%dT%H%M%SZ")
+    dataset = CATALOG[product][1]
+    selection = ",".join(quote(n, safe="") for n in names)
+    endpoint = (f"{CDAS}/{dataset}/data/{label(lo)},{label(hi)}/"
+                f"{selection}?format=cdf")
+    signature = hashlib.sha256((dataset + "|" + selection).encode()).hexdigest()[:12]
+    path = (cache / "_recovered" / product /
+            f"{product}_{label(lo)}_{label(hi)}_{signature}.cdf")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.stat().st_size >= 1024:
+        return {"status": "cached", "path": str(path), "mode": "targeted_cdas_cdf",
+                "request_url": endpoint}
+    response = requests.get(endpoint, timeout=(20, 120),
+                            headers={"Accept": "application/json"})
+    response.raise_for_status()
+    payload = response.json()
+    candidates = payload.get("FileDescription", [])
+    if isinstance(candidates, dict):
+        candidates = [candidates]
+    urls = [x.get("Name") for x in candidates
+            if isinstance(x, dict)
+            and str(x.get("Name", "")).startswith("https://")
+            and urlparse(x.get("Name", "")).path.lower().endswith(".cdf")]
+    if len(urls) != 1:
+        return {"status": "targeted_unavailable", "request_url": endpoint,
+                "reason": "NASA returned no unique targeted CDF download"}
+    return {"status": "found", "path": str(path), "url": urls[0],
+            "mode": "targeted_cdas_cdf", "request_url": endpoint}
+
+
+def write_recovered_source(cdf_path, product, event, out_dir, kind,
+                           expected=()):
+    """Preserve independent epoch axes/source provenance in a separate NPZ."""
+    import cdflib
+    source = cdflib.CDF(str(cdf_path))
+    report, arrays = native_event_slice(
+        source, event["window_start_utc"], event["window_end_exclusive_utc"],
+        event_start=event["event_start_utc"],
+        event_end=event["event_end_exclusive_utc"],
+        before_seconds=event["before_seconds"],
+        after_seconds=event["after_seconds"], product=product)
+    target = out_dir / "source_recovery" / kind / product / (
+        f"{event['event_key']}.npz")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if report["any_records_in_window"] and arrays:
+        temporary = target.with_suffix(".part.npz")
+        try:
+            np.savez_compressed(temporary, **arrays)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    comparison = compare_variable_inventories(
+        expected, report["variables"], RECOMMENDED_SOURCE_VARIABLES.get(product, ()))
+    result = {"status": "saved" if target.is_file() else "no_records",
+              "source_kind": kind, "source_file": str(cdf_path),
+              "archive": str(target) if target.is_file() else None,
+              "variable_inventory_comparison": comparison,
+              "variables": report["variables"],
+              "time_axes": report["time_axes"],
+              "global_attributes": report["metadata"]["global_attributes"],
+              "error_variables": report["errors"],
+              "extractor_version": EVENT_EXTRACTOR_VERSION}
+    metadata = target.with_suffix(".json")
+    metadata.write_text(json.dumps(result, indent=2, default=cdf_json) + "\n",
+                        encoding="utf-8")
+    return result
+
+
+def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
+                          max_total_mib=3072, try_original=True,
+                          try_targeted=True, max_segments=0):
+    """Compare NASA originals with existing subset CDFs, recover what is possible.
+
+    Never overwrites original event archives or silently fuses different CDF
+    time axes. Reports size limits and missing NASA variables explicitly.
+    """
+    manifest = out_dir / "event_manifest.csv"
+    if not manifest.is_file():
+        raise FileNotFoundError(f"Extract the event first: {manifest}")
+    frame = pd.read_csv(manifest).fillna("")
+    if max_segments:
+        frame = frame.iloc[:max_segments]
+    budget = [int(max_total_mib * 1048576)]
+    rows = []
+    inventories = {}
+    for _, entry in frame.iterrows():
+        product = str(entry["product"])
+        if product not in CATALOG:
+            continue
+        if entry.get("source_kind") != "time_subset":
+            continue
+        item = Path(str(entry["metadata"]))
+        if not item.exists():
+            continue
+        original_metadata = json.loads(item.read_text(encoding="utf-8"))
+        subset_variables = list(original_metadata.get("variable_details", {})
+                                .get("variables", {}))
+        event = {k: original_metadata[k] for k in (
+            "event_key", "window_start_utc", "window_end_exclusive_utc",
+            "event_start_utc", "event_end_exclusive_utc",
+            "before_seconds", "after_seconds")}
+        day = date.fromisoformat(str(entry["day"]))
+        status = {"event_id": entry.get("event_id"), "product": product,
+                  "day": str(day), "subset_variables": len(subset_variables),
+                  "expected_missing": [
+                      n for n in RECOMMENDED_SOURCE_VARIABLES.get(product, ())
+                      if n.lower() not in {v.lower() for v in subset_variables}]}
+        if product not in inventories:
+            try:
+                inventories[product] = cdas_variable_inventory(product)
+            except (requests.RequestException, ValueError) as exc:
+                inventories[product] = {"status": "catalog_error",
+                                         "reason": str(exc)}
+        status["nasа_variable_catalog"] = inventories[product]
+        # 'original' describes the daily NASA archive, not the CDAS virtual
+        # variable catalog, which may be richer than the physical file.
+        if try_original:
+            try:
+                found = available_file(product, day, cache)
+                if found["status"] == "found":
+                    outcome, used = bounded_download(
+                        found["url"], found["path"],
+                        int(max_file_mib * 1048576), budget[0])
+                    budget[0] -= used
+                    found["status"] = outcome
+                status["original_download"] = {k: cdf_json(v)
+                                                for k,v in found.items()}
+                if found["status"] in ("cached", "downloaded"):
+                    result = write_recovered_source(
+                        found["path"], product, event, out_dir, "original_daily",
+                        expected=subset_variables)
+                    status["original_recovery"] = {
+                        "status": result["status"], "archive": result["archive"],
+                        "comparison": result["variable_inventory_comparison"],
+                        "read_error_count": len(result["error_variables"])}
+            except (requests.RequestException, ValueError, OSError) as exc:
+                status["original_download"] = {
+                    "status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+        missing = status["expected_missing"]
+        if try_targeted and missing and budget[0] > 0:
+            try:
+                targeted = request_targeted_native_subset(
+                    product, event["window_start_utc"],
+                    event["window_end_exclusive_utc"], missing, cache)
+                if targeted["status"] == "found":
+                    outcome, used = bounded_download(
+                        targeted["url"], targeted["path"],
+                        int(max_file_mib * 1048576), budget[0])
+                    budget[0] -= used
+                    targeted["status"] = outcome
+                status["targeted_download"] = {
+                    k: cdf_json(v) for k,v in targeted.items()}
+                if targeted["status"] in ("cached", "downloaded"):
+                    result = write_recovered_source(
+                        targeted["path"], product, event, out_dir,
+                        "targeted_cdas", expected=subset_variables)
+                    status["targeted_recovery"] = {
+                        "status": result["status"], "archive": result["archive"],
+                        "comparison": result["variable_inventory_comparison"],
+                        "read_error_count": len(result["error_variables"])}
+            except (requests.RequestException, ValueError, OSError) as exc:
+                status["targeted_download"] = {
+                    "status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+        rows.append(status)
+        print(f"[SOURCE COMPARE] {product}: original="
+              f"{status.get('original_download', {}).get('status', 'not_requested')}; "
+              f"targeted={status.get('targeted_download', {}).get('status', 'not_requested')}",
+              flush=True)
+    folder = out_dir / "source_recovery"
+    folder.mkdir(parents=True, exist_ok=True)
+    report = {
+        "segments_checked": len(rows),
+        "bytes_downloaded": int(max_total_mib * 1048576) - budget[0],
+        "sources": rows,
+        "notes": [
+            "Original daily CDF, CDAS server subset and dataset variable catalog may differ.",
+            "Recovered originals are kept separate; no time-axis fusion performed.",
+            "An absent native variable is not interpolated or manufactured.",
+            "Unrecoverable sources must remain explicitly missing."]}
+    (folder / "source_comparison.json").write_text(
+        json.dumps(report, indent=2, default=cdf_json) + "\n",
+        encoding="utf-8")
+    print(f"[SOURCE COMPARISON] {len(rows)} subset-product segments; "
+          f"new CDF bytes: {report['bytes_downloaded']}", flush=True)
+    return report
+
+
 def load_event_intervals(path, max_events=0, before_seconds=10, after_seconds=10, support_seconds=120):
     """Read exact FIELDS half-open event intervals, with optional UTC flanks."""
     import hashlib

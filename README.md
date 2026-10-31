@@ -198,14 +198,13 @@ in per-day compressed NPZ files. **It does not resample the particle data.**
 | Original summary channel | Higher-resolution source | Native cadence |
 | --- | --- | --- |
 | A_H_Rate_TS (LET1 protons) | LET1-RATES10 | 10 s |
-| A_Heavy_Rate_TS (Z 6–28 LET1 heavy-ion group) | LET1-RATES300 CNO/Ne–Si/Fe-group bins | 300 s; **not an identical derived quantity** |
+| A_Heavy_Rate_TS (Z 6–28 LET1 heavy-ion group) | LET1-RATES60 individual heavy-ion species (C, N, O, Ne, Si, Fe, etc.) | 60 s; **not the same combined quantity** |
 | HET_A_H_Rate_TS | HET-RATES10 | 10 s |
 | HET_A_Electrons_Rate_TS | HET-RATES10 | 10 s |
 
-`SECOND-RATES` can be selected explicitly for **1-second proton/electron quicklook**,
+`SECOND-RATES` is included for **1-second proton/electron quicklook**, including with the default high-resolution product selection,
 but it has reduced energy-bin detail and is **not a substitute for the 10-second
-science products for quantitative studies**. Neither He nor heavy ion groups are
-interchangeable with the original Z=6–28 summary channel.
+science products for quantitative studies**. Neither He nor separately identified heavy elements are interchangeable with the original Z=6–28 summary count-rate channel. The 300 s grouped CNO/Ne–Si/Fe directional product is also supported via `--products let1-rates300`, but is not the default.
 
 Synthetic tests (no downloads):
 
@@ -229,7 +228,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --plan-only
 ```
 
-Run the native-cadence archive acquisition only **after** real CDF validation:
+Run the native-cadence archive acquisition only **after** real CDF validation (default: 10 s LET1, 60 s LET1 heavy ions, 10 s HET, and optional-for-physics 1 s quicklook):
 
 ```bash
 python code/IS_O_IS/particle_data_reader.py --highres \

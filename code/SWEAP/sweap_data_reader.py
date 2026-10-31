@@ -1148,6 +1148,9 @@ def event_self_test():
         def __init__(self):
             self.Epoch = np.arange(20, dtype=np.int64)
             self.Epoch_ALT = np.arange(6, dtype=np.int64) + 100
+            self.MEASUREMENT_TIME = np.broadcast_to(
+                np.array([0, 500_000_000, 900_000_000], dtype=np.int64),
+                (20, 3)).copy()
             self.flux = np.arange(20*2*3*4, dtype=np.float32).reshape((20, 2, 3, 4))
             self.velocity = np.arange(20*3, dtype=np.float32).reshape((20, 3))
             self.labels = np.array(["a", "b", "c"])
@@ -1156,7 +1159,7 @@ def event_self_test():
 
         def cdf_info(self):
             return SimpleNamespace(zVariables=[
-                "Epoch", "Epoch_ALT", "flux", "velocity",
+                "Epoch", "Epoch_ALT", "MEASUREMENT_TIME", "flux", "velocity",
                 "labels", "bad_time", "DQF"], rVariables=[])
 
         def varinq(self, name):
@@ -1200,6 +1203,21 @@ def event_self_test():
         assert report["variables"]["bad_time"]["status"] == "skipped_unresolved_time_axis"
         assert report["time_axes"]["Epoch"]["records_in_window"] == 6
         assert report["time_axes"]["Epoch_ALT"]["records_in_window"] == 0
+        assert report["time_axes"]["Epoch"]["phase_counts"]["during_event"] == 6
+        spc_report, spc_arrays = native_event_slice(
+            FakeCDF(), event["window_start_utc"], event["window_end_exclusive_utc"],
+            event_start=event["event_start_utc"],
+            event_end=event["event_end_exclusive_utc"],
+            before_seconds=1, after_seconds=1, product="spc-l2i")
+        assert spc_arrays["derived_SPC_step_UTC_ns"].shape == (6, 3)
+        assert spc_report["spc_l2_per_voltage_step_timing"]["steps_during_event"] == 12
+        padded = load_event_intervals(csv_path, before_seconds=1,
+                                      after_seconds=1, support_seconds=120)[0]
+        assert utc(padded["window_start_utc"]) == utc(event["window_start_utc"]) - pd.Timedelta(seconds=120)
+        grouped = plan_subset_groups([event, padded], gap_seconds=30)
+        assert len(grouped[date(2018, 11, 6)]) == 1
+        assert count_valid_native(np.array([1., -1e31, np.nan]),
+                                  {"FILLVAL": -1e31})["not_fill_and_in_valid_range"] == 1
         archive = Path(directory) / "test.npz"
         np.savez_compressed(archive, **arrays)
         with np.load(archive, allow_pickle=False) as saved:
@@ -1228,8 +1246,12 @@ def event_self_test():
                                    ["spc-l3i"], max_events=1,
                                    before_seconds=1, after_seconds=1, support_seconds=0)
             assert again["status_counts"] == {"resumed": 1}
-    print("PASS: FIELDS exact UTC event bounds, flanks, 3D arrays, flags, "
-          "time axes, midnight split, full NPZ/manifest pipeline and resume")
+            audited = audit_event_archives(target)
+            assert audited["segments_with_during_epoch"] == 1
+            assert audited["segments_with_skipped_variables"] == 1
+    print("PASS: SWEAP event UTC windows, 120s context, grouped subsets, "
+          "3D native arrays, fill masks, SPC nanosecond step times, "
+          "metadata audit, NPZ/manifest and resume")
 
 
 def main():
@@ -1242,7 +1264,7 @@ def main():
     p.add_argument("--events-csv", type=Path, help="FIELDS CSV with event_start_utc and exclusive UTC end")
     p.add_argument("--event-products", default="all",
                    help="Comma-separated SWEAP keys; default all 13 products")
-    p.add_argument("--event-out", type=Path, default=Path("data/sweap/events"),
+    p.add_argument("--event-out", type=Path, default=Path("data/sweap/events_v2"),
                    help="NPZ archives, per-segment JSON and coverage manifest")
     p.add_argument("--max-events", type=int, default=0,
                    help="Only process the first N catalog events; 0 = all 599")

@@ -93,6 +93,34 @@ Commands after `python project.py` forward arguments to the existing
 instrument-specific scripts; they do **not** silently change detector
 measurements or integration times.
 
+## SWEAP preliminary survey
+
+The reader now supports an **eight-family / thirteen-product** NASA SWEAP
+inventory (SPC cup spectra and moments, SPAN-I proton/alpha distributions and
+partial moments, SPAN-Ae/B full 3D electrons and energy spectra, and electron
+pitch-angle distributions). Start by checking file availability with **no
+downloads**:
+
+```bash
+python project.py sweap --self-test
+python project.py sweap --survey --date 2018-11-06 --catalog-only
+```
+
+Then run a cautious first look at the actual multidimensional CDF data:
+
+```bash
+python project.py sweap --survey --date 2018-11-06 \
+  --minutes 8 --max-file-mib 50 --max-total-mib 250 \
+  --json data/sweap/survey_20181106.json
+```
+
+This writes product-by-product variable names, units, array dimensions,
+sampled numeric values, measured EPOCH spacing, and quality-flag variable
+names. Missing days, unavailable products, oversized downloads, and errors
+are reported explicitly rather than interpreted as zeros. It is a **survey**,
+not a validated quality/coverage audit of the 599 switchback candidates.
+See [detailed SWEAP workflow](docs/WORKFLOWS.md#sweap-inspect-nasa-plasma-measurements-and-actual-cadence).
+
 ## Repository guide
 
 ```text

@@ -285,7 +285,7 @@ python project.py sweap --extract-events \
   --support-seconds 120 \
   --max-file-mib 250 --max-total-mib 1200 \
   --event-out data/sweap/events_v2
-python project.py sweap --audit-events --event-out data/sweap/events_v2
+python project.py sweap --audit-events --bundle-audit --event-out data/sweap/events_v2
 ```
 
 The output is isolated from the earlier prototype archives under
@@ -295,6 +295,9 @@ with an adjacent `.json` containing the source reference, native dimensions,
 full CDF variable attributes, missing/invalid counts, and exact EPOCH phase
 counts. The output also includes `event_manifest.csv`, `summary.json`,
 `coverage_audit.csv`, and `coverage_audit_summary.json`.
+`--bundle-audit` also produces `data/sweap/events_v2/sweap_audit_bundle.zip`,
+containing just the compact per-product JSON metadata and CSV audit reports,
+not the potentially large NPZ particle arrays.
 `--no-resume` forces regeneration. Changed extraction semantics and time
 windows automatically invalidate stale resumes.
 

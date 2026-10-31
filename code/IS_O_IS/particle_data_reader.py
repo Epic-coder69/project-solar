@@ -168,7 +168,7 @@ def extract_rate(cdf, variable, source_filename, *, epoch_converter):
     end = epoch + pd.to_timedelta(halfwidths[1], unit='s')
     if start.isna().any() or end.isna().any():
         raise ValueError(f'{variable}: invalid integration timestamps')
-    data = pd.to_numeric(pd.Series(values), errors='coerce').to_numpy(dtype=float)
+    data = pd.to_numeric(pd.Series(values), errors='coerce').to_numpy(dtype=float, copy=True)
     invalid = ~np.isfinite(data)
     reasons = np.full(len(data), '', dtype=object)
     reasons[invalid] = 'nonfinite'

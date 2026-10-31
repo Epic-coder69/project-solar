@@ -62,26 +62,6 @@ python project.py status
 On macOS, to open the existing folder in VS Code without installing its
 shell command: `open -a "Visual Studio Code" .`
 
-### Remove obsolete local folders and logs
-
-Previous Git renames (`M_FIELD` → `FIELDS` and `IS_O_IS` →
-`IS⊙IS`) may leave old **local-only** folders containing Python caches or
-duplicate files. They no longer exist as separate tracked folders on GitHub.
-The root `logs/` directory is also local-only (Git-ignored).
-
-```bash
-python project.py cleanup          # Preview every proposed deletion
-python project.py cleanup --apply  # Remove only safe duplicates and local logs
-```
-
-The tool removes a legacy script **only if byte-for-byte identical** to the
-matching current script; distinct or modified files are preserved and
-reported. It also discards rebuildable caches inside legacy folders and
-empty legacy directories, and removes root `logs/` and root `*.log` files.
-**It never touches `data/`**, the 599-event catalog, NASA CDF/NPZ files,
-canonical source code or scientific results. If a legacy folder remains, it
-contains files the tool intentionally refused to delete. Check its warnings.
-
 ### Most useful commands
 
 ```bash
@@ -118,7 +98,6 @@ measurements or integration times.
 ```text
 project-solar/
 ├── project.py                    # Stable, ASCII one-command entry point
-├── cleanup_local.py              # Safe removal of duplicate folders/logs
 ├── README.md                     # Current overview (this file)
 ├── The_Research.md               # Scientific objectives and research notes
 ├── .gitignore                    # Keeps NASA CDFs, caches and outputs local
@@ -147,9 +126,9 @@ on the analysis computer. A `git pull` does not fetch or delete them.
 Keep an independent backup of this directory before any restructuring.
 Never run `git clean -fdx` or force-reset your working tree to tidy folders.
 
-Small synthetic tests run automatically in **GitHub Actions** on code
-changes. Those checks validate software behavior, **not** scientific
-calibration, true data availability or causal particle acceleration.
+Run `python project.py test` to execute the eight offline instrument self-tests.
+These checks validate software behavior, **not** scientific calibration,
+true data availability or causal particle acceleration.
 
 ## Scientific interpretation
 

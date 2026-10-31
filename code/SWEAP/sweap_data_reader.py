@@ -873,7 +873,7 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
                 "attributes": cdf_json(attrs),
                 "cdf_data_type": str(getattr(var, "Data_Type_Description",
                                                getattr(var, "Data_Type", ""))),
-                "cdf_record_dimensions": list(getattr(var, "Dim_Sizes", []))}
+                "cdf_record_dimensions": cdf_json(getattr(var, "Dim_Sizes", []) or [])}
         except (ValueError, OSError, TypeError, IndexError, AttributeError) as exc:
             result["variables"][name] = {
                 "status": "read_error", "reason": f"{type(exc).__name__}: {exc}"}
@@ -1026,6 +1026,9 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib,
                                 budget, file_mib, groups={}, subset_state=subset_state)
         return subset
     except (requests.RequestException, OSError, ValueError) as exc:
+        if request_start != start or request_stop != stop:
+            return event_source(product, day, start, stop, cache, state,
+                                budget, file_mib, groups={}, subset_state=subset_state)
         return {"status": "error", "reason": str(exc)}
 
 

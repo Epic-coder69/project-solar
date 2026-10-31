@@ -114,6 +114,27 @@ python project.py sweap --survey --date 2018-11-06 \
   --json data/sweap/survey_20181106.json
 ```
 
+The first November 6 survey found **8 inspected products**, **5 original
+daily files skipped by the 50 MiB cap**, and **0 processing errors**. Those
+eight products represent **4 of the 8 measurement families**; skipped is
+not missing. To investigate just the four oversized families, the reader
+can request **NASA-generated eight-minute CDF subsets** instead of
+large full-day CDFs:
+
+```bash
+python project.py sweap --survey --date 2018-11-06 \
+  --families cup-charge-flux,proton-3d,alpha-3d,electron-3d \
+  --subset-on-limit --minutes 8 \
+  --max-file-mib 50 --max-total-mib 250 \
+  --json data/sweap/survey_large_families_20181106.json
+```
+
+This fallback is opt-in; original daily files, including any already
+downloaded files, are not overwritten. Subsets live under
+`data/sweap/_subsets/`. If NASA cannot provide a subset, or the
+subset exceeds the same download budget, the report records that condition
+instead of silently omitting the product.
+
 This writes product-by-product variable names, units, array dimensions,
 sampled numeric values, measured EPOCH spacing, and quality-flag variable
 names. Missing days, unavailable products, oversized downloads, and errors

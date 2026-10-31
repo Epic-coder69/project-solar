@@ -916,16 +916,16 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib):
 def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                    before_seconds=10, after_seconds=10,
                    max_file_mib=50, max_total_mib=2048,
-                   max_variable_mib=128, resume=True):
+                   max_variable_mib=0, support_seconds=120, resume=True):
     """Write all available native measurements plus an explicit coverage manifest."""
     import cdflib
-    events = load_event_intervals(csv_path, max_events, before_seconds, after_seconds)
+    events = load_event_intervals(csv_path, max_events, before_seconds, after_seconds, support_seconds)
     output_dir.mkdir(parents=True, exist_ok=True)
     budget = [int(max_total_mib * 1048576)]
     daily_state = {}
     rows = []
     print(f"[SWEAP EVENTS] {len(events)} FIELDS candidates; {len(products)} NASA products; "
-          f"flanks {before_seconds}/{after_seconds}s", flush=True)
+          f"flanks {before_seconds}/{after_seconds}s, coarse context {support_seconds}s each side", flush=True)
     for product in products:
         for event in events:
             for day, begin, end in split_utc_days(event["window_start_utc"],
@@ -937,14 +937,26 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                        "day": day.isoformat(),
                        "segment_start_utc": begin.isoformat(),
                        "segment_end_exclusive_utc": end.isoformat(),
-                       "archive": str(path), "metadata": str(meta_path)}
+                       "archive": str(path), "metadata": str(meta_path),
+                       "extractor_version": EVENT_EXTRACTOR_VERSION,
+                       "unlimited_variable_size": max_variable_mib == 0}
                 if resume and path.is_file() and meta_path.is_file():
                     try:
                         prior = json.loads(meta_path.read_text(encoding="utf-8"))
-                        if prior.get("status") == "saved":
+                        if (prior.get("status") == "saved"
+                                and prior.get("extractor_version") == EVENT_EXTRACTOR_VERSION
+                                and prior.get("window_start_utc") == event["window_start_utc"]
+                                and prior.get("window_end_exclusive_utc") == event["window_end_exclusive_utc"]
+                                and prior.get("unlimited_variable_size") == (max_variable_mib == 0)
+                                and prior.get("source_file")
+                                and path.stat().st_size > 100):
                             row.update({"status": "resumed",
                                         "saved_variables": prior.get("saved_variables", 0),
-                                        "records_primary_epoch": prior.get("records_primary_epoch", 0)})
+                                        "records_primary_epoch": prior.get("records_primary_epoch", 0),
+                                        "records_during_event": prior.get("records_during_event", 0),
+                                        "not_saved_variables": prior.get("not_saved_variables", 0),
+                                        "complete_variable_extraction": prior.get("complete_variable_extraction", False),
+                                        "read_errors": prior.get("read_errors", 0)})
                             rows.append(row)
                             continue
                     except (OSError, ValueError):
@@ -960,11 +972,21 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                 else:
                     try:
                         report, arrays = native_event_slice(
-                            cdflib.CDF(str(src["path"])), begin, end, max_variable_mib)
+                            cdflib.CDF(str(src["path"])), begin, end, max_variable_mib,
+                            event_start=event["event_start_utc"],
+                            event_end=event["event_end_exclusive_utc"],
+                            before_seconds=before_seconds, after_seconds=after_seconds)
                         row["saved_variables"] = report["saved_variables"]
                         primary = next((n for n in report["time_axes"] if n.lower() == "epoch"),
                                        next(iter(report["time_axes"])))
                         row["records_primary_epoch"] = report["time_axes"][primary]["records_in_window"]
+                        phases = report["time_axes"][primary]["phase_counts"]
+                        row["records_during_event"] = phases["during_event"]
+                        row["records_immediate_pre"] = phases["immediate_pre"]
+                        row["records_immediate_post"] = phases["immediate_post"]
+                        row["records_outer_support"] = (phases["outer_support_before"]
+                                                        + phases["outer_support_after"])
+                        row["complete_variable_extraction"] = report["complete_variable_extraction"]
                         row["status"] = ("saved" if report["any_records_in_window"]
                                          else "no_epoch_records")
                         row["not_saved_variables"] = report["not_saved_variables"]
@@ -996,6 +1018,11 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
         "status_counts": pd.Series([r["status"] for r in rows]).value_counts().to_dict(),
         "bytes_downloaded": int(max_total_mib * 1048576) - budget[0],
         "event_source_csv": str(csv_path), "manifest_csv": str(manifest),
+        "extractor_version": EVENT_EXTRACTOR_VERSION,
+        "support_seconds": support_seconds, "max_variable_mib": max_variable_mib,
+        "product_segments_with_during_epoch": sum(r.get("records_during_event", 0) > 0 for r in rows),
+        "product_segments_with_complete_variable_extraction": sum(
+            r.get("complete_variable_extraction", False) for r in rows),
         "notes": [
             "Native CDF records and dimensions preserved without resampling.",
             "Epoch time within an event does not establish measurement exposure overlap.",
@@ -1056,7 +1083,7 @@ def event_self_test():
                        "event_end_exclusive_utc": "2018-11-06T00:00:07Z"}]).to_csv(
                            csv_path, index=False)
         event = load_event_intervals(csv_path, before_seconds=1,
-                                     after_seconds=1)[0]
+                                     after_seconds=1, support_seconds=0)[0]
         assert event["window_start_utc"] == "2018-11-06T00:00:02+00:00"
         assert event["window_end_exclusive_utc"] == "2018-11-06T00:00:08+00:00"
         assert "/" not in event["event_key"]
@@ -1088,7 +1115,7 @@ def event_self_test():
             target = Path(directory) / "event_out"
             first = extract_events(csv_path, target, Path(directory) / "cache",
                                    ["spc-l3i"], max_events=1,
-                                   before_seconds=1, after_seconds=1)
+                                   before_seconds=1, after_seconds=1, support_seconds=0)
             assert first["status_counts"] == {"saved": 1}
             saved_files = list(target.glob("spc-l3i/*.npz"))
             assert len(saved_files) == 1
@@ -1097,7 +1124,7 @@ def event_self_test():
             assert pd.read_csv(target / "event_manifest.csv").iloc[0]["records_primary_epoch"] == 6
             again = extract_events(csv_path, target, Path(directory) / "cache",
                                    ["spc-l3i"], max_events=1,
-                                   before_seconds=1, after_seconds=1)
+                                   before_seconds=1, after_seconds=1, support_seconds=0)
             assert again["status_counts"] == {"resumed": 1}
     print("PASS: FIELDS exact UTC event bounds, flanks, 3D arrays, flags, "
           "time axes, midnight split, full NPZ/manifest pipeline and resume")
@@ -1106,6 +1133,8 @@ def event_self_test():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")
+    p.add_argument("--audit-events", action="store_true",
+                   help="Audit saved SWEAP event JSON for event EPOCH counts and variable omissions")
     p.add_argument("--extract-events", action="store_true",
                    help="Extract all available native SWEAP variables during exact FIELDS event intervals")
     p.add_argument("--events-csv", type=Path, help="FIELDS CSV with event_start_utc and exclusive UTC end")
@@ -1119,8 +1148,10 @@ def main():
                    help="Additional seconds preceding the FIELDS event")
     p.add_argument("--after-seconds", type=float, default=10,
                    help="Additional seconds following the FIELDS event")
-    p.add_argument("--max-variable-mib", type=float, default=128,
-                   help="Maximum uncompressed bytes per individual event variable")
+    p.add_argument("--support-seconds", type=float, default=120,
+                   help="Extra coarse-measurement context on each side of event and flanks (default 120s)")
+    p.add_argument("--max-variable-mib", type=float, default=0,
+                   help="Maximum uncompressed MiB per variable; 0 means no size cap (default)")
     p.add_argument("--no-resume", dest="resume", action="store_false",
                    help="Re-extract existing event NPZ archives")
     p.add_argument("--survey", action="store_true",
@@ -1155,6 +1186,11 @@ def main():
         for key, (family, dataset, _) in CATALOG.items():
             print(f"{key:25} {family:22} {dataset}")
         return
+    if args.audit_events:
+        if args.extract_events or args.survey:
+            p.error("--audit-events cannot be combined with extract/survey")
+        audit_event_archives(args.event_out)
+        return
     if args.extract_events:
         if args.survey:
             p.error("Choose --survey or --extract-events, not both")
@@ -1163,12 +1199,12 @@ def main():
         if args.max_events < 0:
             p.error("--max-events must be >= 0 (0 means all events)")
         if any(not np.isfinite(v) for v in
-               (args.before_seconds, args.after_seconds,
+               (args.before_seconds, args.after_seconds, args.support_seconds,
                 args.max_file_mib, args.max_total_mib, args.max_variable_mib)):
             p.error("Event time and size limits must be finite numbers")
-        if args.before_seconds < 0 or args.after_seconds < 0:
+        if args.before_seconds < 0 or args.after_seconds < 0 or args.support_seconds < 0:
             p.error("Event flanks must be nonnegative")
-        if min(args.max_file_mib, args.max_total_mib, args.max_variable_mib) <= 0:
+        if min(args.max_file_mib, args.max_total_mib) <= 0 or args.max_variable_mib < 0:
             p.error("Event size limits must be positive")
         event_products = (list(CATALOG) if args.event_products == "all"
                           else [x.strip() for x in args.event_products.split(",") if x.strip()])
@@ -1181,7 +1217,8 @@ def main():
                        max_events=args.max_events, before_seconds=args.before_seconds,
                        after_seconds=args.after_seconds,
                        max_file_mib=args.max_file_mib, max_total_mib=args.max_total_mib,
-                       max_variable_mib=args.max_variable_mib, resume=args.resume)
+                       max_variable_mib=args.max_variable_mib,
+                       support_seconds=args.support_seconds, resume=args.resume)
         return
     if args.survey:
         if not args.date:

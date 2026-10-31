@@ -4,7 +4,7 @@
 Keeps detector integration boundaries, energy/sector axes, counts, flux,
 uncertainties, viewing geometry and quality flags in separate daily NPZ files.
 Default products: LET1 10s (H, He), LET1 60s (heavy elements), HET 10s
-(H, He, electrons). The optional 1s SECOND-RATES product is reduced-bin
+(H, He, electrons). The explicitly selected 1s SECOND-RATES product is reduced-bin
 quicklook and must not be substituted for full science-grade flux comparisons.
 The original hourly summary mode remains unchanged.
 """
@@ -29,7 +29,7 @@ from particle_data_reader import (
 
 BASE_URL = 'https://spp-isois.sr.unh.edu/data_public/EPIHi/level2/'
 PRODUCTS = ('let1-rates10', 'let1-rates60', 'let1-rates300', 'het-rates10', 'second-rates')
-DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10', 'second-rates')
+DEFAULT_PRODUCTS = ('let1-rates10', 'let1-rates60', 'het-rates10')
 FILE_RE = re.compile(
     r'^psp_isois-epihi_l2-(let1-rates10|let1-rates60|let1-rates300|het-rates10|second-rates)_(\d{8})_v(\d+)\.cdf$', re.I
 )
@@ -178,7 +178,15 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns):
                 'shape': list(a.shape), 'units': _json(_attr(attrs, 'UNITS', ''))
             }
     if not any(n.endswith('_Flux') for n in arrays):
-        raise ValueError('No flux variables in CDF; unsupported science product')
+        candidates = [(n, str(_attr(cdf.varattsget(n), 'DEPEND_0', '')))
+                      for n in names if n.endswith(('_Flux', '_Rate'))]
+        raise ValueError(
+            'No time-aligned flux arrays decoded from CDF. '
+            'Inspect source dependencies before assuming data are missing: '
+            f'flux/rate candidate names and DEPEND_0={candidates[:24]}; '
+            f'Epoch records={len(midpoint)}. '
+            'The hourly/10s/60s science products remain available.'
+        )
     for name, meta in details.items():
         if name not in arrays:
             continue
@@ -402,7 +410,8 @@ def main(argv=None):
     p.add_argument('--self-test', action='store_true')
     p.add_argument('--file', type=Path, help='Decode one existing EPI-Hi CDF')
     p.add_argument('--events-csv', type=Path)
-    p.add_argument('--products', nargs='+', choices=PRODUCTS, default=list(DEFAULT_PRODUCTS))
+    p.add_argument('--products', nargs='+', choices=PRODUCTS, default=list(DEFAULT_PRODUCTS),
+                   help='Select EPI-Hi products; 1s second-rates requires explicit selection pending metadata validation')
     p.add_argument('--start', help='UTC YYYY-MM-DD inclusive')
     p.add_argument('--end', help='UTC YYYY-MM-DD exclusive')
     p.add_argument('--before-minutes', type=float, default=30)

@@ -361,6 +361,19 @@ The reader now also recognizes native-cadence EPI-Hi
 \`let2-rates60\`. The intermediate products are only used where their
 archived daily files and matching detector channels actually exist.
 
+**Reader compatibility note (2018 hourly HET):** Some official
+`het-rates3600` CDFs declare time-dependent auxiliary variables with
+**zero actual records**, such as `A_CNO_SECT_Rate` shaped `(0, 2, 25)`
+despite the nonempty `Epoch` array. The reader now records these
+variables under `skipped_zero_record_variables` in the per-file manifest
+instead of rejecting all otherwise-valid hourly data or manufacturing
+zero particle counts. Only science variables actually present are eligible
+for source matching.
+
+The fallback analyzer explicitly converts timestamps from the old hourly
+summary CSV to Unix **nanoseconds**. Without that conversion, pandas versions
+that parse timestamps as microseconds may falsely report no hourly coverage.
+
 First run the existing survey CSV through the multiresolution audit **without
 downloading anything**:
 

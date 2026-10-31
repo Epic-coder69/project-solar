@@ -8,8 +8,9 @@ Examples:
   python project.py highres --events-csv data/...
   python project.py sweap --self-test
 
-Scripts retain their original locations; this CLI avoids Unicode-path and
-instrument-folder renames in user commands. Large NASA data stay local.
+IS⊙IS now exposes one public reader and one public analyzer with the
+original tested instrument-specific backends retained underneath. Legacy
+command aliases and all stored NASA data paths are preserved.
 """
 from __future__ import annotations
 

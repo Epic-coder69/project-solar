@@ -118,6 +118,11 @@ def _iso(timestamp):
     return timestamp.isoformat().replace('+00:00', 'Z')
 
 
+def _epoch_nanoseconds(series):
+    """Normalize UTC timestamps to epoch ns across pandas 2.x/3.x resolutions."""
+    return pd.to_datetime(series, utc=True, errors='raise').dt.as_unit('ns').astype('int64')
+
+
 def _half_width_seconds(raw, attrs):
     """Fail closed on ambiguous time units (do not mistake ns for s)."""
     units = str(_attr(attrs, 'UNITS', '')).lower().strip()
@@ -352,8 +357,8 @@ def filter_by_overlap(frame, intervals):
     """
     if frame.empty or not intervals:
         return frame.iloc[:0].copy()
-    left = pd.to_datetime(frame['integration_start_utc'], utc=True).astype('int64').to_numpy()
-    right = pd.to_datetime(frame['integration_end_utc'], utc=True).astype('int64').to_numpy()
+    left = _epoch_nanoseconds(frame['integration_start_utc']).to_numpy()
+    right = _epoch_nanoseconds(frame['integration_end_utc']).to_numpy()
     if (right <= left).any():
         raise ValueError('Bad integration interval in decoded CDF')
     starts = np.asarray([a.value for a, _ in intervals], dtype=np.int64)
@@ -513,8 +518,8 @@ def coverage_audit(windows, measurements, variables):
     by_channel = {}
     for variable, group in measurements.groupby('variable'):
         group = group.copy()
-        group['_start_ns'] = pd.to_datetime(group.integration_start_utc, utc=True).astype('int64')
-        group['_end_ns'] = pd.to_datetime(group.integration_end_utc, utc=True).astype('int64')
+        group['_start_ns'] = _epoch_nanoseconds(group.integration_start_utc)
+        group['_end_ns'] = _epoch_nanoseconds(group.integration_end_utc)
         group = group.sort_values('_end_ns')
         starts = group['_start_ns'].to_numpy(dtype=np.int64)
         ends = group['_end_ns'].to_numpy(dtype=np.int64)
@@ -767,6 +772,10 @@ def self_test():
     assert len(merged) == 1
     assert required_days(merged, halo_days=1) == [date(2018, 11, 4), date(2018, 11, 5),
                                                  date(2018, 11, 6), date(2018, 11, 7)]
+    # pandas 3.x often parses ISO times as datetime64[us], while Timestamp.value is ns.
+    microsecond_times = pd.Series(pd.date_range('2018-11-06', periods=2, freq='min', tz='UTC').as_unit('us'))
+    assert _epoch_nanoseconds(microsecond_times).tolist() == [
+        _utc('2018-11-06T00:00:00Z').value, _utc('2018-11-06T00:01:00Z').value]
     selected = filter_by_overlap(rate, merged)
     assert len(selected) == 3  # three integrations intersect the merged window
     # Window only touches the integration endpoint: half-open exclusion.

@@ -279,6 +279,20 @@ def _download(session, filename, folder):
 
 
 def _coverage(windows, starts, ends):
+    """Report physical integration overlap, WITHOUT applying instrument quality flags.
+
+    Binary-search relevant integrations instead of scanning all 1-second samples
+    for every event; overlapping integrations are counted once in duration.
+    """
+    starts = np.asarray(starts, dtype=np.int64)
+    ends = np.asarray(ends, dtype=np.int64)
+    if len(starts) != len(ends):
+        raise ValueError('Integration boundary arrays have different lengths')
+    order = np.argsort(starts, kind='stable')
+    starts, ends = starts[order], ends[order]
+    if np.any(ends <= starts):
+        raise ValueError('Nonpositive integration interval in coverage audit')
+    max_ends = np.maximum.accumulate(ends) if len(ends) else ends
     rows = []
     for w in windows.itertuples(index=False):
         for label, left, right in (
@@ -287,26 +301,33 @@ def _coverage(windows, starts, ends):
             ('after', w.event_end_exclusive_utc, w.window_end_exclusive_utc),
         ):
             a, b = _utc(left).value, _utc(right).value
-            if a == b:
+            if b <= a:
                 continue
-            spans = sorted((max(int(s), a), min(int(e), b))
-                           for s, e in zip(starts, ends) if s < b and e > a)
+            lo = int(np.searchsorted(max_ends, a, side='right'))
+            hi = int(np.searchsorted(starts, b, side='left'))
+            if hi <= lo:
+                pieces = []
+            else:
+                lefts = np.maximum(starts[lo:hi], a)
+                rights = np.minimum(ends[lo:hi], b)
+                pieces = sorted((int(s), int(e)) for s, e in zip(lefts, rights)
+                                if e > s)
             duration, x0, x1 = 0, None, None
-            for s, e in spans:
+            for s, e in pieces:
                 if x0 is None:
                     x0, x1 = s, e
                 elif s <= x1:
                     x1 = max(x1, e)
                 else:
-                    duration += x1 - x0
+                    duration += x1-x0
                     x0, x1 = s, e
             if x0 is not None:
-                duration += x1 - x0
+                duration += x1-x0
             rows.append({
                 'event_id': w.event_id, 'segment': label,
                 'integration_overlap_seconds': duration / 1e9,
-                'coverage_fraction_unflagged': min(1.0, duration/(b-a)),
-                'overlapping_integrations': len(spans),
+                'coverage_fraction_unfiltered': min(1.0, duration/(b-a)),
+                'overlapping_integrations': len(pieces),
             })
     return pd.DataFrame(rows)
 
@@ -421,6 +442,21 @@ def self_test():
         with np.load(path, allow_pickle=False) as saved:
             assert saved['A_H_Flux'].shape == (1,2)
             assert saved['R26A_CNO_SECT_Flux'].shape == (1,3,4)
+    # 1-second coverage must be computed without quadratic Python scanning.
+    from types import SimpleNamespace as _SN
+    sample_windows = pd.DataFrame([{
+        'event_id': 'synthetic', 'window_start_utc': '2018-11-06T00:00:00Z',
+        'event_start_utc': '2018-11-06T00:00:01Z',
+        'event_end_exclusive_utc': '2018-11-06T00:00:03Z',
+        'window_end_exclusive_utc': '2018-11-06T00:00:04Z'
+    }])
+    overlap_ns = np.array([t0, t0+1_000_000_000,
+                           t0+2_000_000_000, t0+3_000_000_000])
+    audit = _coverage(sample_windows, overlap_ns, overlap_ns+1_000_000_000)
+    assert audit['segment'].tolist() == ['before', 'during', 'after']
+    assert audit['integration_overlap_seconds'].tolist() == [1.0, 2.0, 1.0]
+    assert (audit['coverage_fraction_unfiltered'] == 1.0).all()
+
     class OneSecondCDF(FakeCDF):
         def __init__(self):
             super().__init__()

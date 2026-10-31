@@ -228,6 +228,16 @@ def test():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")
+    p.add_argument("--survey", action="store_true",
+                   help="Inspect all 8 SWEAP measurement families / 13 public NASA product variants")
+    p.add_argument("--catalog-only", action="store_true",
+                   help="Survey NASA file availability without downloading any CDF")
+    p.add_argument("--max-file-mib", type=float, default=50,
+                   help="Survey download cap per CDF file in MiB (default 50)")
+    p.add_argument("--max-total-mib", type=float, default=250,
+                   help="Survey total download cap in MiB (default 250)")
+    p.add_argument("--families", help="Optional comma-separated survey families (see --list-products)")
+
     p.add_argument("--product", default="spc-l3i", choices=PRODUCTS)
     p.add_argument("--date", help="UTC YYYY-MM-DD (required with --download)")
     p.add_argument("--download", action="store_true")
@@ -240,10 +250,31 @@ def main():
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args()
     if args.self_test:
-        test(); return
+        test()
+        from sweap_family_survey import self_test
+        self_test()
+        return
     if args.list_products:
-        for key, (dataset, _, cadence_s, _) in PRODUCTS.items():
-            print(f"{key:16} {dataset:32} advertised cadence {cadence_s} s")
+        from sweap_family_survey import CATALOG
+        for key, (family, dataset, _) in CATALOG.items():
+            print(f"{key:25} {family:22} {dataset}")
+        return
+    if args.survey:
+        from sweap_family_survey import CATALOG, survey
+        if not args.date:
+            p.error("--survey requires --date YYYY-MM-DD")
+        if any(not np.isfinite(v) or v <= 0 for v in
+               (args.minutes, args.max_file_mib, args.max_total_mib)):
+            p.error("--minutes, --max-file-mib and --max-total-mib must be positive")
+        all_families = {spec[0] for spec in CATALOG.values()}
+        wanted = {s.strip() for s in args.families.split(",")} if args.families else None
+        if wanted and (wanted - all_families):
+            p.error("Unknown --families: " + ", ".join(sorted(wanted - all_families)))
+        day = date.fromisoformat(args.date)
+        output = args.json or args.cache_dir / f"survey_{day:%Y%m%d}.json"
+        survey(day, args.cache_dir, output, minutes=args.minutes, start=args.start,
+               catalog_only=args.catalog_only, max_file_mib=args.max_file_mib,
+               max_total_mib=args.max_total_mib, families=wanted)
         return
     if not np.isfinite(args.minutes) or args.minutes <= 0:
         p.error("--minutes must be positive")

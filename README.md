@@ -64,9 +64,18 @@ shell command: `open -a "Visual Studio Code" .`
 
 ### Unified IS⊙IS interfaces
 
-There are now **two primary particle commands**. They are *two user-facing
-entry points*, not a single monolithic 2,000-line parser: the tested legacy
-modules remain internal decoders and analysis backends.
+There are now **exactly two IS⊙IS Python source files**, not wrappers:
+
+- `code/IS⊙IS/isois_reader.py` contains both original L2 summary CDF
+  decoding and EPI-Hi native-cadence CDF decoding, including their tests.
+- `code/IS⊙IS/isois_analyzer.py` contains the original hourly survey
+  analysis, fine-event coverage audit and multiresolution coverage audit,
+  including their tests.
+
+The five former `particle_*.py` scripts and the temporary interface-test
+wrapper were merged and then removed. This reduces the IS⊙IS source folder to
+**one actual reader and one actual analyzer**; the functions are in those two
+files, not delegated to hidden subprocess backends.
 
 - `isois-reader` **ingests** official CDF files, preserves the original
   detector, species, energy bins, native integration times, count/flux values,
@@ -104,9 +113,9 @@ python project.py sweap --list-products
 Legacy aliases **continue to work unchanged**, including
 `python project.py highres ...`, `python project.py particles ...`,
 `python project.py coverage`, `python project.py fine-coverage ...` and
-`python project.py particle-analysis ...`. Direct invocations of the older
-particle Python scripts also still work. No cached NASA CDFs or NPZ products
-are moved, rewritten or deleted.
+`python project.py particle-analysis ...`. The former standalone `particle_*.py` script filenames are retired;
+use `project.py` or the two new files instead. No cached NASA CDFs, NPZs,
+summary CSVs or existing analysis results are moved, rewritten or deleted.
 
 **Scope:** this is a structural refactor, **not** a new particle-physics
 pipeline. The existing coverage reports measure nominal timestamp overlap;
@@ -203,7 +212,7 @@ project-solar/
 ├── .gitignore                    # Keeps NASA CDFs, caches and outputs local
 └── code/
     ├── FIELDS/                   # Magnetic-field data and event detection
-    ├── IS⊙IS/                    # isois_reader.py, isois_analyzer.py + internal backends
+    ├── IS⊙IS/                    # exactly isois_reader.py + isois_analyzer.py
     └── SWEAP/                    # Exploratory plasma data inspection
 ```
 

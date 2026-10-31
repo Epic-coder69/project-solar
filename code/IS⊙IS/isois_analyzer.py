@@ -1321,8 +1321,9 @@ def _plot_events_main(argv=None):
                     (scores['channel'] == 'HET_A_H') &
                     (scores['best_tier'] == 'fine_event_and_flanks'),
                     'event_id'].astype(str).tolist()
-        ids = (list(dict.fromkeys(preferred +
-              windows['event_id'].astype(str).tolist())))[:args.max_events])
+        ids = list(dict.fromkeys(
+            preferred + windows['event_id'].astype(str).tolist()
+        ))[:args.max_events]
         selected = windows.set_index('event_id').loc[ids].reset_index()
     try:
         import matplotlib

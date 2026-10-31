@@ -1140,12 +1140,26 @@ def _plot_pick(event, channel, inventory, summary, *, energy_index,
     """Use fastest real, valid, overlapping channel values; no product mixing."""
     left = _utc(event.window_start_utc).value
     right = _utc(event.window_end_exclusive_utc).value
+    # Native EPI-Hi CDFs are daily Epoch partitions. A one-day halo
+    # admits hourly measurements straddling midnight, while skipping
+    # unrelated CDF days; crucial when plotting hundreds of events.
+    from datetime import date, timedelta
+    first_day = _utc(event.window_start_utc).date() - timedelta(days=1)
+    last_day = _utc(event.window_end_exclusive_utc).date() + timedelta(days=1)
     sources = CHANNELS[channel]
     for product in sorted((p for p in sources if p != 'summary'),
                           key=lambda p: PRODUCT_CADENCE[p]):
         for variable in sources[product]:
             records, units, axis = [], None, None
             for path in inventory.get(product, []):
+                file_match = PATTERN.fullmatch(path.name)
+                if not file_match:
+                    continue
+                day_text = file_match.group(2)
+                source_day = date.fromisoformat(
+                    f'{day_text[:4]}-{day_text[4:6]}-{day_text[6:8]}')
+                if not first_day <= source_day <= last_day:
+                    continue
                 manifest = json.loads(Path(str(path) + '.manifest.json').read_text())
                 if variable not in manifest.get('variables', {}):
                     continue
@@ -1252,6 +1266,8 @@ def _plot_events_main(argv=None):
                    help='Plot this FIELDS event ID; repeat flag to plot several')
     p.add_argument('--max-events', type=int, default=4,
                    help='Number of automatically selected events (default 4)')
+    p.add_argument('--all-events', action='store_true',
+                   help='Generate one PNG for EVERY FIELDS switchback candidate')
     p.add_argument('--channels', nargs='+', choices=tuple(CHANNELS),
                    default=['LET1_A_H','HET_A_H','HET_A_Electrons',
                             'LET1_R26A_CNO'],
@@ -1269,6 +1285,8 @@ def _plot_events_main(argv=None):
         return _plot_events_self_test()
     if args.max_events < 1 or args.max_events > 50:
         p.error('--max-events must be from 1 to 50')
+    if args.all_events and args.event_ids:
+        p.error('--all-events and --event-id are mutually exclusive')
     if (min(args.energy_index, args.sector_index) < 0
         or not np.isfinite(args.before_seconds)
         or not np.isfinite(args.after_seconds)
@@ -1282,7 +1300,9 @@ def _plot_events_main(argv=None):
         for w in windows.head(20).itertuples(index=False):
             print(f'{w.event_id}: {w.event_start_utc} to {w.event_end_exclusive_utc}')
         return
-    if args.event_ids:
+    if args.all_events:
+        selected = windows
+    elif args.event_ids:
         requested = list(dict.fromkeys(args.event_ids))
         found = windows.loc[windows['event_id'].isin(requested)]
         missing = set(requested) - set(found['event_id'])
@@ -1405,6 +1425,9 @@ def _plot_events_main(argv=None):
                      'interpretation': 'Visualization only; neither particle quality nor acceleration assessed',
                      'selected_energy_index': args.energy_index,
                      'selected_sector_index': args.sector_index,
+                     'requested_all_events': args.all_events,
+                     'total_catalog_events': int(len(events)),
+                     'events_plotted': int(len(selected)),
                      'before_seconds': args.before_seconds,
                      'after_seconds': args.after_seconds,
                      'plots': metadata}, indent=2) + '\n')
@@ -1447,6 +1470,7 @@ def self_test():
 def help_text():
     print("""IS⊙IS analysis — all analysis logic lives in this one Python file
 
+  python project.py isois-analyzer plot-events --all-events
   python project.py isois-analyzer plot-events [options]
   python project.py isois-analyzer coverage [options]
   python project.py isois-analyzer fine-coverage [options]

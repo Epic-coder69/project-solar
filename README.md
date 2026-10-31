@@ -124,6 +124,38 @@ significance, energy-passband equivalence or particle acceleration. The
 previous 295/599 fine and 597/599 at-least-hourly figures remain the last
 verified user-run results until the analysis is rerun.
 
+### Five-minute EPI-Hi heavy-ion rate recovery
+
+The archived `let1-rates300` and `het-rates300` products contain
+**sectored heavy-ion count rates** (CNO, Ne–Si, Fe-group), not `*_Flux`
+arrays. Earlier reader code rejected these files because it incorrectly
+required a differential-flux array. The corrected reader retains 300-second
+integration boundaries, energy/sector axes, count-rate values, numeric
+validity masks and source metadata, classifying these products as
+`sectored_heavy_ion_count_rates_only`.
+
+The analyzer separately reports `LET1_R1A_*`, `LET1_R26A_*` and
+`HET_A_*` heavy-ion groups, **not** as the old Z=6–28 aggregate or as
+interchangeable calibrated flux. Nominal timestamp overlap is not a
+quality-flag or Poisson-significance check.
+
+Reprocess already-cached NASA source CDFs **without downloading again**:
+
+```bash
+git pull --ff-only origin main
+python project.py isois-reader --self-test
+python project.py isois-analyzer --self-test
+python project.py isois-reader epihi \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --products let1-rates300 het-rates300 --offline --resume
+python project.py isois-analyzer coverage
+```
+
+The 295 candidates with 1–10-second timing remain the same primary
+high-resolution sample. Five-minute heavy-ion count rates are separate
+composition/time-context measurements; they do not reconstruct missing
+1–10-second proton or electron observations.
+
 ## SWEAP reader (one file)
 
 All SWEAP discovery, acquisition, single-product inspection and preliminary

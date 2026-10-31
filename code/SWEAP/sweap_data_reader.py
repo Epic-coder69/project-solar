@@ -816,6 +816,9 @@ def bundle_event_audit(directory):
         candidate = directory / name
         if candidate.is_file():
             samples.append(candidate)
+    for recovered in (directory / "source_recovery").rglob("*.json"):
+        if recovered.is_file():
+            samples.append(recovered)
     if not samples:
         raise FileNotFoundError(f"No event metadata to bundle under {directory}")
     with ZipFile(archive, "w", compression=ZIP_DEFLATED, compresslevel=6) as zipped:
@@ -993,7 +996,7 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
             except (requests.RequestException, ValueError) as exc:
                 inventories[product] = {"status": "catalog_error",
                                          "reason": str(exc)}
-        status["nasа_variable_catalog"] = inventories[product]
+        status["nasa_variable_catalog"] = inventories[product]
         # 'original' describes the daily NASA archive, not the CDAS virtual
         # variable catalog, which may be richer than the physical file.
         if try_original:
@@ -1669,6 +1672,14 @@ def main():
     p.add_argument("--list-products", action="store_true")
     p.add_argument("--bundle-audit", action="store_true",
                    help="Zip all SWEAP event JSON and coverage reports for sharing (no large NPZ data)")
+    p.add_argument("--recover-sources", action="store_true",
+                   help="Compare NASA originals vs saved event subsets and recover available omitted variables")
+    p.add_argument("--recover-no-original", action="store_true",
+                   help="Only request targeted variables and NASA catalog; do not download large originals")
+    p.add_argument("--recover-no-targeted", action="store_true",
+                   help="Only download/compare original daily CDF; do not request targeted subsets")
+    p.add_argument("--recover-max-segments", type=int, default=0,
+                   help="Limit recovery to first N subset-product segments; 0 = all")
     p.add_argument("--audit-events", action="store_true",
                    help="Audit saved SWEAP event JSON for event EPOCH counts and variable omissions")
     p.add_argument("--extract-events", action="store_true",
@@ -1721,6 +1732,21 @@ def main():
     if args.list_products:
         for key, (family, dataset, _) in CATALOG.items():
             print(f"{key:25} {family:22} {dataset}")
+        return
+    if args.recover_sources:
+        if args.extract_events or args.survey or args.audit_events:
+            p.error("--recover-sources is a separate phase after event extraction")
+        if args.recover_max_segments < 0:
+            p.error("--recover-max-segments must be >= 0")
+        if min(args.max_file_mib, args.max_total_mib) <= 0:
+            p.error("Recovery download budgets must be positive")
+        recover_event_sources(
+            args.event_out, args.cache_dir,
+            max_file_mib=args.max_file_mib,
+            max_total_mib=args.max_total_mib,
+            try_original=not args.recover_no_original,
+            try_targeted=not args.recover_no_targeted,
+            max_segments=args.recover_max_segments)
         return
     if args.audit_events:
         if args.extract_events or args.survey:

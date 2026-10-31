@@ -831,7 +831,7 @@ def _summary_main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--variables', nargs='+', default=list(DEFAULT_VARIABLES))
     args = parser.parse_args()
-    if args._summary_self_test:
+    if args.self_test:
         _summary_self_test()
         return
     try:
@@ -1541,7 +1541,7 @@ def _epihi_main(argv=None):
     p.add_argument('--download-attempts', type=int, default=4,
                    help='Retries per source CDF for transient network errors (default: 4)')
     args = p.parse_args(argv)
-    if args._epihi_self_test:
+    if args.self_test:
         _epihi_self_test()
         return
     if args.offline and args.download:

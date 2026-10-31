@@ -124,9 +124,18 @@ significance, energy-passband equivalence or particle acceleration. The
 previous 295/599 fine and 597/599 at-least-hourly figures remain the last
 verified user-run results until the analysis is rerun.
 
-## SWEAP preliminary survey
+## SWEAP reader (one file)
 
-The reader now supports an **eight-family / thirteen-product** NASA SWEAP
+All SWEAP discovery, acquisition, single-product inspection and preliminary
+eight-family survey functions now live in **one source file**:
+[`code/SWEAP/sweap_data_reader.py`](code/SWEAP/sweap_data_reader.py).
+There is no separate `sweap_family_survey.py` module. `--survey` is a
+**reader option for preliminary data inspection**, not the scientific
+plasma-analysis stage. A future `sweap_data_analysis.py` would deal with
+quality-screened event measurements, cross-instrument comparisons, and
+the 599 magnetic candidates.
+
+The reader supports an **eight-family / thirteen-product** NASA SWEAP
 inventory (SPC cup spectra and moments, SPAN-I proton/alpha distributions and
 partial moments, SPAN-Ae/B full 3D electrons and energy spectra, and electron
 pitch-angle distributions). Start by checking file availability with **no

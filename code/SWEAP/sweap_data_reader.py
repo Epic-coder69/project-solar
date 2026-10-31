@@ -877,7 +877,34 @@ def native_event_slice(cdf, begin, stop, max_variable_mib=0,
     return result, arrays
 
 
-def event_source(product, day, start, stop, cache, state, budget, file_mib):
+
+def plan_subset_groups(events, gap_seconds=30, max_minutes=12):
+    """Reuse a NASA time subset across nearby event windows on the same day.
+
+    Conservative grouping avoids one remote request per event. Intervals
+    always contain each event's COMPLETE support window; no downsampling.
+    """
+    daily = {}
+    for event in events:
+        for day, begin, end in split_utc_days(event["window_start_utc"],
+                                              event["window_end_exclusive_utc"]):
+            daily.setdefault(day, []).append((begin, end))
+    result = {}
+    gap = pd.Timedelta(seconds=gap_seconds)
+    max_span = pd.Timedelta(minutes=max_minutes)
+    for day, windows in daily.items():
+        groups = []
+        for begin, end in sorted(windows):
+            if groups and begin <= groups[-1][1] + gap and (
+                    max(end, groups[-1][1]) - groups[-1][0] <= max_span):
+                groups[-1] = (groups[-1][0], max(groups[-1][1], end))
+            else:
+                groups.append((begin, end))
+        result[day] = groups
+    return result
+
+def event_source(product, day, start, stop, cache, state, budget, file_mib,
+                 groups=None, subset_state=None):
     """Reuse a daily CDF when small, else request a NASA time subset."""
     key = (product, str(day))
     if key not in state:
@@ -898,16 +925,26 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib):
         return source
     if source["status"] != "skipped_size_budget":
         return source
+    request_start, request_stop = start, stop
+    for lo, hi in (groups or {}).get(day, []):
+        if lo <= start and hi >= stop:
+            request_start, request_stop = lo, hi
+            break
+    subset_key = (product, str(day), request_start.isoformat(), request_stop.isoformat())
+    if subset_state is not None and subset_key in subset_state:
+        return subset_state[subset_key]
     if budget[0] <= 0:
         return {"status": "skipped_total_size_budget"}
     try:
-        minutes = float((stop - start) / pd.Timedelta(minutes=1))
-        subset = subset_for_window(product, day, cache, start.isoformat(), minutes)
+        minutes = float((request_stop - request_start) / pd.Timedelta(minutes=1))
+        subset = subset_for_window(product, day, cache, request_start.isoformat(), minutes)
         if subset["status"] == "found":
             status, used = bounded_download(subset["url"], subset["path"],
                                             int(file_mib * 1048576), budget[0])
             budget[0] -= used
             subset["status"] = status
+        if subset_state is not None:
+            subset_state[subset_key] = subset
         return subset
     except (requests.RequestException, OSError, ValueError) as exc:
         return {"status": "error", "reason": str(exc)}
@@ -923,6 +960,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
     output_dir.mkdir(parents=True, exist_ok=True)
     budget = [int(max_total_mib * 1048576)]
     daily_state = {}
+    subset_state = {}
+    subset_groups = plan_subset_groups(events)
     rows = []
     print(f"[SWEAP EVENTS] {len(events)} FIELDS candidates; {len(products)} NASA products; "
           f"flanks {before_seconds}/{after_seconds}s, coarse context {support_seconds}s each side", flush=True)
@@ -962,7 +1001,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
                     except (OSError, ValueError):
                         pass
                 src = event_source(product, day, begin, end, cache, daily_state,
-                                   budget, max_file_mib)
+                                   budget, max_file_mib,
+                                   groups=subset_groups, subset_state=subset_state)
                 row["source_status"] = src["status"]
                 row["source_file"] = src.get("path")
                 row["source_url"] = src.get("url")
@@ -1020,6 +1060,8 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
         "event_source_csv": str(csv_path), "manifest_csv": str(manifest),
         "extractor_version": EVENT_EXTRACTOR_VERSION,
         "support_seconds": support_seconds, "max_variable_mib": max_variable_mib,
+        "planned_grouped_time_subsets": sum(map(len, subset_groups.values())),
+        "reused_grouped_subsets": len(subset_state),
         "product_segments_with_during_epoch": sum(r.get("records_during_event", 0) > 0 for r in rows),
         "product_segments_with_complete_variable_extraction": sum(
             r.get("complete_variable_extraction", False) for r in rows),

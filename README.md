@@ -202,9 +202,17 @@ in per-day compressed NPZ files. **It does not resample the particle data.**
 | HET_A_H_Rate_TS | HET-RATES10 | 10 s |
 | HET_A_Electrons_Rate_TS | HET-RATES10 | 10 s |
 
-`SECOND-RATES` offers **1-second proton/electron quicklook** with reduced energy detail, but must currently be selected explicitly (`--products second-rates`) while its metadata handling is validated,
-but it has reduced energy-bin detail and is **not a substitute for the 10-second
-science products for quantitative studies**. Neither He nor separately identified heavy elements are interchangeable with the original Z=6–28 summary count-rate channel. The 300 s grouped CNO/Ne–Si/Fe directional product is also supported via `--products let1-rates300`, but is not the default.
+**1-second rates-only coverage:** `SECOND-RATES` contains LET1 A/B, LET2 C,
+and HET A/B proton and electron **raw counts and count rates**. It has no
+`*_Flux` arrays and is not an energy-resolved calibrated differential-flux
+product. It is included by default for precise timing, alongside the 10-second
+energy-resolved science products. All measurements retain their detector identity,
+original time integration, CDF quality flags, and source metadata.
+
+Helium is not a substitute for the Z=6–28 LET1 heavy-ion channel. The 60 s
+species-specific measurements are not identical to the original combined heavy-ion
+summary rate. An additional 300 s grouped product is available using
+`--products let1-rates300`.
 
 Synthetic tests (no downloads):
 
@@ -228,7 +236,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --plan-only
 ```
 
-Run the native-cadence archive acquisition only **after** real CDF validation (default: 10 s LET1, 60 s LET1 heavy ions and 10 s HET):
+Run the native-cadence archive acquisition only **after** real CDF validation (default: 1 s rates-only quicklook, 10 s LET1, 60 s heavy ions and 10 s HET):
 
 ```bash
 python code/IS_O_IS/particle_data_reader.py --highres \
@@ -236,20 +244,25 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --download --resume
 ```
 
-The optional `SECOND-RATES` 1-second product currently needs an additional
-dependency-metadata inspection: one downloaded November 6 file was rejected because
-the strict reader could not identify its time-aligned `_Flux` arrays. The ISʘIS
-user guide describes such flux arrays, so **do not interpret this as proof of
-missing measurements**. To inspect the local CDF without changing anything:
+To validate the 1-second rate product already cached for November 6, 2018:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --inspect \
-  data/isois/epihi_cdf/second-rates/psp_isois-epihi_l2-second-rates_20181106_v26.cdf
+python code/IS_O_IS/particle_data_reader.py --highres \
+  --start 2018-11-06 --end 2018-11-07 \
+  --products second-rates --download --resume
 ```
+
+The reader validates the known `*_Rate` variables and units, stores counts and
+count rates separately, and **refuses to reinterpret rates-only data as
+differential flux**. Product-specific fill-value masks are stored as
+`<variable>__valid_numeric`. These are *not* a substitute for the independent
+`Quality_Flag` validation. Coverage CSVs report **unfiltered time overlap**;
+they are not claims of usable detector exposure or statistically significant
+particle enhancements.
 
 Outputs under `data/isois/highres/` include `index.json`, one
 `<source-file>.npz` per product/day, accompanying `.manifest.json`, and
-per-file `.coverage.csv` time-overlap audits. Event-window NPZ files include
+per-file `.coverage.csv` unfiltered time-overlap audits. Event-window NPZ files include
 an `_events_<fingerprint>` suffix to prevent full-day reprocessing from
 overwriting event-targeted data. `index.json` summarizes the most recent run. Open NPZ using
 `np.load(filename, allow_pickle=False)`. Timestamps are UTC Unix

@@ -877,6 +877,81 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
     return summary
 
 
+
+def event_self_test():
+    """Offline regression test of exact FIELDS intervals and full 3D records."""
+    import tempfile
+    from types import SimpleNamespace, ModuleType
+    from unittest.mock import patch
+
+    class FakeCDF:
+        def __init__(self):
+            self.Epoch = np.arange(20, dtype=np.int64)
+            self.Epoch_ALT = np.arange(6, dtype=np.int64) + 100
+            self.flux = np.arange(20*2*3*4, dtype=np.float32).reshape((20, 2, 3, 4))
+            self.velocity = np.arange(20*3, dtype=np.float32).reshape((20, 3))
+            self.labels = np.array(["a", "b", "c"])
+            self.bad_time = np.arange(8)
+            self.DQF = np.zeros(20, dtype=np.int16)
+
+        def cdf_info(self):
+            return SimpleNamespace(zVariables=[
+                "Epoch", "Epoch_ALT", "flux", "velocity",
+                "labels", "bad_time", "DQF"], rVariables=[])
+
+        def varinq(self, name):
+            arr = self.varget(name)
+            return SimpleNamespace(Rec_Vary=name != "labels",
+                                   Last_Rec=len(arr)-1, Dim_Sizes=list(arr.shape[1:]))
+
+        def varattsget(self, name):
+            dep = ("Epoch_ALT" if name == "bad_time_alt" else
+                   "Epoch" if name not in ("labels", "bad_time") else "")
+            return {"DEPEND_0": dep, "UNITS": "test", "FILLVAL": -1e31}
+
+        def varget(self, name, *, startrec=None, endrec=None):
+            arr = getattr(self, name)
+            return arr if startrec is None else arr[startrec:endrec+1]
+
+    fake = ModuleType("cdflib")
+    fake.cdfepoch = SimpleNamespace(to_datetime=lambda values:
+        np.datetime64("2018-11-06T00:00:00", "ns") +
+        np.asarray(values).astype("timedelta64[s]"))
+    with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, {"cdflib": fake}):
+        csv_path = Path(directory) / "fields.csv"
+        pd.DataFrame([{"event_id": "../../not_a_filepath",
+                       "event_start_utc": "2018-11-06T00:00:03Z",
+                       "event_end_utc": "2018-11-06T00:00:06Z",
+                       "event_end_exclusive_utc": "2018-11-06T00:00:07Z"}]).to_csv(
+                           csv_path, index=False)
+        event = load_event_intervals(csv_path, before_seconds=1,
+                                     after_seconds=1)[0]
+        assert event["window_start_utc"] == "2018-11-06T00:00:02+00:00"
+        assert event["window_end_exclusive_utc"] == "2018-11-06T00:00:08+00:00"
+        assert "/" not in event["event_key"]
+        report, arrays = native_event_slice(FakeCDF(), event["window_start_utc"],
+                                             event["window_end_exclusive_utc"])
+        assert arrays["flux"].shape == (6, 2, 3, 4)
+        assert np.array_equal(arrays["flux"], FakeCDF().flux[2:8])
+        assert np.array_equal(arrays["velocity"], FakeCDF().velocity[2:8])
+        assert arrays["Epoch"].tolist() == list(range(2, 8))
+        assert arrays["labels"].tolist() == ["a", "b", "c"]
+        assert "bad_time" not in arrays
+        assert report["variables"]["bad_time"]["status"] == "skipped_unresolved_time_axis"
+        assert report["time_axes"]["Epoch"]["records_in_window"] == 6
+        assert report["time_axes"]["Epoch_ALT"]["records_in_window"] == 0
+        archive = Path(directory) / "test.npz"
+        np.savez_compressed(archive, **arrays)
+        with np.load(archive, allow_pickle=False) as saved:
+            assert saved["flux"].shape == (6, 2, 3, 4)
+            assert np.array_equal(saved["Epoch"], np.arange(2, 8))
+        segments = list(split_utc_days("2018-11-05T23:59:58Z",
+                                       "2018-11-06T00:00:02Z"))
+        assert len(segments) == 2 and segments[0][2] == segments[1][1]
+    print("PASS: FIELDS exact half-open UTC event bounds, flanks, 3D arrays, "
+          "quality flags, time-axis audit, safe NPZ and midnight split")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")

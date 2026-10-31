@@ -130,7 +130,18 @@ def main(argv: list[str] | None = None) -> int:
             if rc:
                 print(f"[FAILED] {name} exit={rc}", file=sys.stderr)
                 return rc
-        print("\nPASS: all 8 offline instrument self-tests")
+        # Exercise the new command routing without NASA access or writes.
+        routing = ROOT / "code/IS⊙IS/isois_interface_tests.py"
+        if not routing.is_file():
+            print(f"[FAILED] Missing IS⊙IS routing tests: {routing}",
+                  file=sys.stderr)
+            return 2
+        print("\n[TEST] IS⊙IS unified-interface routing", flush=True)
+        rc = subprocess.call([sys.executable, str(routing)], cwd=str(ROOT))
+        if rc:
+            print(f"[FAILED] IS⊙IS routing tests exit={rc}", file=sys.stderr)
+            return rc
+        print("\nPASS: all 8 instrument self-tests and unified routing tests")
         return 0
     if command not in SCRIPTS:
         print(f"Unknown command: {command}", file=sys.stderr)

@@ -50,7 +50,7 @@ def _cdf_module():
     try:
         import cdflib
     except ImportError as exc:
-        raise RuntimeError('Missing cdflib: python -m pip install -r code/M_FIELD/external_libraries_requirements.txt') from exc
+        raise RuntimeError('Missing cdflib: python -m pip install -r code/FIELDS/external_libraries_requirements.txt') from exc
     return cdflib
 
 

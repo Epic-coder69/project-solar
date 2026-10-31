@@ -4,7 +4,7 @@
 
 ## Research objective
 
-**The central goal of Project Solar is to determine how magnetic-field structures and variability measured by Parker Solar Probe's FIELDS instrument relate to other physical measurements, especially energetic particles measured by ISʘIS.**
+**The central goal of Project Solar is to determine how magnetic-field structures and variability measured by Parker Solar Probe's FIELDS instrument relate to other physical measurements, especially energetic particles measured by IS⊙IS.**
 
 We start with magnetic-field rotations and *switchback candidates* because they provide identifiable time intervals and quantitative magnetic properties. **Detecting switchbacks is a means to the scientific question, not the final result.**
 
@@ -33,8 +33,8 @@ See [The_Research.md](The_Research.md) for scientific background, research quest
 | **FIELDS magnetic-field acquisition and rotation screening** | Implemented and run on the November–December 2018 interval |
 | **FIELDS detailed magnetic-event characterization** | Implemented; candidate boundaries/physical classification still require independent validation |
 | **Strong magnetic-candidate archival** | Completed for the November–December 2018 run, with checksums and a retention manifest |
-| **ISʘIS summary-rate reader** | Initial implementation in GitHub; survey-only, requires real-CDF end-to-end verification |
-| **ISʘIS event-centered rate characterization** | Initial implementation; pre/during/post comparisons against FIELDS event times, not a validated correlation test |
+| **IS⊙IS summary-rate reader** | Initial implementation in GitHub; survey-only, requires real-CDF end-to-end verification |
+| **IS⊙IS event-centered rate characterization** | Initial implementation; pre/during/post comparisons against FIELDS event times, not a validated correlation test |
 | **Calibrated EPI-Lo / EPI-Hi flux and energy-spectral analysis** | Not yet implemented |
 | **Matched controls, statistical tests, and final cross-instrument correlations** | Not yet implemented |
 | **SWEAP plasma and additional FIELDS wave/electric-field correlations** | Planned extensions |
@@ -72,7 +72,7 @@ Parker Solar Probe observations
            |                          |
            |                     FIELDS event catalog
            |                          |
-           +-- ISʘIS EPI-Lo / EPI-Hi | 
+           +-- IS⊙IS EPI-Lo / EPI-Hi | 
            |       |                 |
            |       +-- particle_data_reader.py
            |       |      Current: summary-rate survey extraction
@@ -102,19 +102,19 @@ Project Solar/
 ├── README.md
 ├── The_Research.md
 └── code/
-    ├── M_FIELD/
+    ├── FIELDS/
     │   ├── magnetic_data_reader.py
     │   ├── magnetic_data_analysis.py
     │   └── external_libraries_requirements.txt
-    └── IS_O_IS/
+    └── IS⊙IS/
         ├── particle_data_reader.py
         └── particle_data_analysis.py
 ```
 
 - **FIELDS reader:** obtains full-cadence MAG data and screens magnetic investigation windows, with progress reporting and daily checkpoints.
 - **FIELDS analysis:** evaluates magnetic rotations, writes event/audit/registry CSVs, selects strong magnetic candidates, and optionally archives verified data before cleaning scoped original-CDF caches.
-- **ISʘIS reader:** reads selected **Level-2 summary count-rate** variables, preserves per-sample integration intervals and units, applies metadata-based invalid-value checks, and writes a CSV and checksum manifest.
-- **ISʘIS analysis:** aligns those survey-rate integrations with existing FIELDS strong-event intervals to summarize exposure-weighted pre/during/post rates and data coverage. This is **exploratory**, not a statistically validated correlation or calibrated flux analysis.
+- **IS⊙IS reader:** reads selected **Level-2 summary count-rate** variables, preserves per-sample integration intervals and units, applies metadata-based invalid-value checks, and writes a CSV and checksum manifest.
+- **IS⊙IS analysis:** aligns those survey-rate integrations with existing FIELDS strong-event intervals to summarize exposure-weighted pre/during/post rates and data coverage. This is **exploratory**, not a statistically validated correlation or calibrated flux analysis.
 
 The old experimental work is preserved on the [pre-cleanup archive branch](https://github.com/Epic-coder69/project-solar/tree/archive/pre-cleanup-2026-10-25).
 
@@ -125,7 +125,7 @@ Run commands from the **project root**. Python 3.10+ recommended:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r code/M_FIELD/external_libraries_requirements.txt
+python -m pip install -r code/FIELDS/external_libraries_requirements.txt
 ```
 
 All NASA CDF downloads, candidate tables, retained archives, and intermediate measurements belong in **`data/`**, which is excluded from Git. Back up that directory separately.
@@ -133,10 +133,10 @@ All NASA CDF downloads, candidate tables, retained archives, and intermediate me
 ### Self-tests (no NASA downloads)
 
 ```bash
-python code/M_FIELD/magnetic_data_reader.py --self-test
-python code/M_FIELD/magnetic_data_analysis.py --self-test
-python code/IS_O_IS/particle_data_reader.py --self-test
-python code/IS_O_IS/particle_data_analysis.py --self-test
+python code/FIELDS/magnetic_data_reader.py --self-test
+python code/FIELDS/magnetic_data_analysis.py --self-test
+python code/IS⊙IS/particle_data_reader.py --self-test
+python code/IS⊙IS/particle_data_analysis.py --self-test
 ```
 
 Passing synthetic tests does **not** prove that the physics, instrument calibrations, real-data coverage, or cross-instrument correlations are correct.
@@ -146,7 +146,7 @@ Passing synthetic tests does **not** prove that the physics, instrument calibrat
 A short screening example:
 
 ```bash
-python code/M_FIELD/magnetic_data_reader.py --scan \
+python code/FIELDS/magnetic_data_reader.py --scan \
   --start 2018-11-07T03:30:00 --duration 10m \
   --output data/example_magnetic_candidates.csv
 ```
@@ -154,18 +154,18 @@ python code/M_FIELD/magnetic_data_reader.py --scan \
 The reader saves screened **investigation windows**, not confirmed physical events. For a completed reader scan:
 
 ```bash
-python code/M_FIELD/magnetic_data_analysis.py \
+python code/FIELDS/magnetic_data_analysis.py \
   --windows-csv data/example_magnetic_candidates.csv --no-plots
 ```
 
 The completed two-month study used:
 
 ```bash
-python code/M_FIELD/magnetic_data_reader.py --scan \
+python code/FIELDS/magnetic_data_reader.py --scan \
   --start 2018-11-01 --duration 2mo \
   --output data/nov_dec_2018_candidates.csv
 
-python code/M_FIELD/magnetic_data_analysis.py \
+python code/FIELDS/magnetic_data_analysis.py \
   --windows-csv data/nov_dec_2018_candidates.csv \
   --no-plots --keep-strong-only
 ```
@@ -188,7 +188,7 @@ data/full_analysis_nov_dec_2018_candidates_strong_archive/
 
 The high-resolution archives retain quality-screened magnetic vectors and context; they are **not bit-for-bit replacements for NASA's original CDFs and full instrument metadata**. The opt-in `--keep-strong-only` option can delete eligible local raw CDFs **only after** completed-scan, audit, and archive verification; missing NASA telemetry alone does not veto a verified run. Use `--finalize-existing` with the other required flags to complete archival from an already-finished analysis without repeating computation.
 
-## ISʘIS: native-cadence particle data for FIELDS events
+## IS⊙IS: native-cadence particle data for FIELDS events
 
 The **high-resolution** reader is separate from the hourly summary-survey mode.
 It retains native time integrations, energy bins, counts, differential flux,
@@ -217,13 +217,13 @@ summary rate. An additional 300 s grouped product is available using
 Synthetic tests (no downloads):
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres --self-test
+python code/IS⊙IS/particle_data_reader.py --highres --self-test
 ```
 
 Read the **already downloaded** HET 10-second sample (preserving the raw CDF):
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --file data/isois/epihi/psp_isois-epihi_l2-het-rates10_20181106_v26.cdf \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv
 ```
@@ -231,7 +231,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
 Plan all four categories against the verified FIELDS switchback candidates:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --plan-only
 ```
@@ -239,7 +239,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
 Acquire all candidate-aligned CDFs at their native resolutions (default: 1 s rate-only quicklook, 10 s LET1, 60 s heavy ions and 10 s HET). This may involve many downloads:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --download --resume
 ```
@@ -247,7 +247,7 @@ python code/IS_O_IS/particle_data_reader.py --highres \
 To validate the 1-second rate product already cached for November 6, 2018:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --start 2018-11-06 --end 2018-11-07 \
   --products second-rates --download --resume
 ```
@@ -269,8 +269,8 @@ incomplete. It scans existing NPZ partitions, keeps detector products distinct,
 and verifies stored SHA-256 file manifests by default:
 
 \`\`\`bash
-python code/IS_O_IS/particle_coverage_audit.py --self-test
-python code/IS_O_IS/particle_coverage_audit.py \
+python code/IS⊙IS/particle_coverage_audit.py --self-test
+python code/IS⊙IS/particle_coverage_audit.py \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --before-seconds 10 --after-seconds 10
 \`\`\`
@@ -298,7 +298,7 @@ timing audit passes**. Missing source days are not quiet solar wind.
 
 ### Interrupted downloads and safe re-runs
 
-The public ISʘIS archive may disconnect during a long multi-day download.
+The public IS⊙IS archive may disconnect during a long multi-day download.
 The downloader now retries individual CDF transfers, preserves `.part` files
 and requests HTTP Range resumes when supported by the server; if Range is
 ignored it starts the file again instead of appending duplicates. Each
@@ -309,9 +309,9 @@ product-days. `--resume` validates the NPZ and manifest SHA-256 before reusing
 them; it does not require rerunning FIELDS.
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --self-test
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --download --resume --download-attempts 4
 ```
@@ -341,7 +341,7 @@ Do not treat a sample overlapping a switchback as evidence of particle
 acceleration; check quality, count statistics, field-of-view, controls, and
 possible time delays. Original NASA CDFs and the FIELDS catalog are never deleted.
 
-## ISʘIS: multi-resolution SAME-channel recovery of missing coverage
+## IS⊙IS: multi-resolution SAME-channel recovery of missing coverage
 
 This is a **fallback inventory**, not numerical interpolation or a merged
 high-cadence flux time series. It ranks **measurements from the same
@@ -352,7 +352,7 @@ A-side; it does not claim that rate and flux energy passbands are equivalent.
 
 **Known 2018 coverage**: our first EPI-Hi 1/10/60-second encounter archive
 gave 295/599 switchback candidates with nominal fine timing. The separate
-original 3600-second ISʘIS summary survey had overlapping integrations for
+original 3600-second IS⊙IS summary survey had overlapping integrations for
 597/599 events, but those are *hourly context*, not event-resolved counts.
 
 The reader now also recognizes native-cadence EPI-Hi
@@ -378,9 +378,9 @@ First run the existing survey CSV through the multiresolution audit **without
 downloading anything**:
 
 \`\`\`bash
-python code/IS_O_IS/particle_multires_coverage.py --self-test
+python code/IS⊙IS/particle_multires_coverage.py --self-test
 
-python code/IS_O_IS/particle_multires_coverage.py \
+python code/IS⊙IS/particle_multires_coverage.py \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --summary-csv data/isois/fields_event_summary_rates.csv
 \`\`\`
@@ -390,7 +390,7 @@ background information for the exact FIELDS event dates. This does **not**
 replace the existing high-resolution archives or summary CSV:
 
 \`\`\`bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --products let1-rates3600 het-rates3600 \
   --download --resume --download-attempts 4
@@ -400,7 +400,7 @@ Optionally test additional intermediate products if the official archive
 lists them during the relevant dates:
 
 \`\`\`bash
-python code/IS_O_IS/particle_data_reader.py --highres \
+python code/IS⊙IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --products let1-rates300 het-rates60 het-rates300 let2-rates60 \
   --download --resume --download-attempts 4
@@ -439,19 +439,19 @@ remapping, summation or flux/rate conversion is carried out. Numeric
 validity masks and quality flags require separate instrument-specific
 evaluation, as do Poisson statistics and direction-dependent effects.
 
-## ISʘIS: initial exploratory survey workflow
+## IS⊙IS: initial exploratory survey workflow
 
 First inspect the variables and metadata in an existing **summary** CDF:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py \
+python code/IS⊙IS/particle_data_reader.py \
   --inspect path/to/psp_isois_l2-summary_20181106_v26.cdf
 ```
 
 For a one-day survey download and extraction:
 
 ```bash
-python code/IS_O_IS/particle_data_reader.py \
+python code/IS⊙IS/particle_data_reader.py \
   --download --start 2018-11-06 --end 2018-11-07 \
   --output data/isois/summary_rates_20181106.csv
 ```
@@ -459,7 +459,7 @@ python code/IS_O_IS/particle_data_reader.py \
 Then run the **event-centered survey comparison** against the previously retained FIELDS strong-event catalog:
 
 ```bash
-python code/IS_O_IS/particle_data_analysis.py \
+python code/IS⊙IS/particle_data_analysis.py \
   --rates-csv data/isois/summary_rates_20181106.csv \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --output data/isois/fields_event_particle_survey.csv
@@ -467,11 +467,11 @@ python code/IS_O_IS/particle_data_analysis.py \
 
 With only one day of particle data, **most FIELDS events will correctly have insufficient particle coverage**. The analysis writes per-event/per-rate-channel pre/during/post estimates and explicitly flags inadequate exposure; it does not claim a statistical correlation.
 
-**Crucial limitation:** Level-2 ISʘIS **summary count rates are not calibrated differential particle fluxes**. This starter workflow is suitable for exploring candidate time intervals only. Science-grade particle intensity/spectral comparisons require the appropriate EPI-Lo and EPI-Hi science products, energy-bin and species metadata, proper uncertainties and quality flags, plus independently chosen quiet/control intervals.
+**Crucial limitation:** Level-2 IS⊙IS **summary count rates are not calibrated differential particle fluxes**. This starter workflow is suitable for exploring candidate time intervals only. Science-grade particle intensity/spectral comparisons require the appropriate EPI-Lo and EPI-Hi science products, energy-bin and species metadata, proper uncertainties and quality flags, plus independently chosen quiet/control intervals.
 
 ## Scientific interpretation and next steps
 
-1. **Validate** the FIELDS candidate selection and the ISʘIS reader against real observations and instrument documentation.
+1. **Validate** the FIELDS candidate selection and the IS⊙IS reader against real observations and instrument documentation.
 2. **Acquire science-grade particle products** and calculate physically interpretable energy- and species-resolved measurements.
 3. **Build the correlation layer**: match exposure intervals, test pre/during/post differences and possible lags, compare with non-switchback controls, account for unequal coverage and changing spacecraft/solar-wind conditions, report uncertainty and significance.
 4. **Extend the measurements** to SWEAP plasma parameters and additional FIELDS electric/wave diagnostics where data quality permits.
@@ -481,7 +481,7 @@ Even a reproducible temporal coincidence does not by itself prove **particle acc
 ## Data and instrument acknowledgments
 
 - [PSP/FIELDS data portal](https://fields.ssl.berkeley.edu/data/) and NASA CDAWeb.
-- Parker Solar Probe ISʘIS instrument team and public Level-2 products.
+- Parker Solar Probe IS⊙IS instrument team and public Level-2 products.
 - Parker Solar Probe SWEAP team for any future plasma or ephemeris products.
 - [Martinović et al. switchback catalog](https://doi.org/10.5281/zenodo.4579821) for exploratory external comparison.
 

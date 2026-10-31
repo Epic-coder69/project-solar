@@ -347,5 +347,22 @@ def self_test():
                                         Path(folder) / "test.cdf", 4096, 4096)
         assert state == "skipped_size_budget" and count == 0
         assert not list(Path(folder).glob("*.part"))
+    # NASA's CDAS REST can return a URL for a CDF containing only the
+    # selected time interval. Verify its UTC bounds and separate cache path.
+    class FakeSubsetResponse:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"FileDescription": [{
+                "Name": "https://cdaweb.gsfc.nasa.gov/sp_phys/tmp/preview.cdf"}]}
+    with TemporaryDirectory() as folder, patch.object(requests, "get",
+                                                     return_value=FakeSubsetResponse()) as get:
+        subset = subset_for_window("spi-proton-l2", day, Path(folder),
+                                   "2018-11-06T00:00:00Z", 8)
+        assert subset["status"] == "found"
+        assert subset["mode"] == "time_subset"
+        assert "_subsets" in subset["path"]
+        assert "20181106T000000Z_20181106T000800Z" in subset["path"]
+        assert "ALL-VARIABLES?format=cdf" in get.call_args.args[0]
     print("PASS: SWEAP eight-family catalog, 13 product IDs, exact-day selection, "
-          "3D one-record sampling, and strict download budgets")
+          "3D one-record sampling, strict download budgets, and NASA time-subset request")

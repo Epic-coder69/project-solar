@@ -280,17 +280,10 @@ def _download(session, filename, folder, *, attempts=5):
             with session.get(url, stream=True, timeout=(20, 90),
                              headers=headers) as response:
                 if response.status_code == 416 and offset:
-                    # The .part may be complete, or stale. Validate before use.
-                    try:
-                        import cdflib
-                        info = cdflib.CDF(str(part)).cdf_info()
-                        if info.zVariables or info.rVariables:
-                            part.replace(path)
-                            return path
-                    except Exception:
-                        pass
+                    # Never promote a .part file on the basis of its CDF header:
+                    # partially transferred files can still have valid headers.
                     part.unlink(missing_ok=True)
-                    raise IOError('Server rejected stale partial download; restarting')
+                    raise IOError('Server rejected partial Range; restarting from zero')
 
                 response.raise_for_status()
                 if response.status_code == 206:
@@ -331,7 +324,7 @@ def _download(session, filename, folder, *, attempts=5):
             if status not in (408, 429, 500, 502, 503, 504):
                 raise  # e.g. 404: missing product, not a transient outage
         except (requests.ConnectionError, requests.Timeout,
-                requests.ChunkedEncodingError, IOError, OSError, ValueError) as exc:
+                requests.exceptions.ChunkedEncodingError, IOError, OSError, ValueError) as exc:
             last_error = exc
         if attempt < attempts:
             delay = min(2 ** (attempt - 1), 12)

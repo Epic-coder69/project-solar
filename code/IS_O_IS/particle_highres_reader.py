@@ -598,12 +598,16 @@ def main(argv=None):
     p.add_argument('--offline', action='store_true')
     p.add_argument('--resume', action='store_true')
     p.add_argument('--plan-only', action='store_true')
+    p.add_argument('--download-attempts', type=int, default=4,
+                   help='Retries per source CDF for transient network errors (default: 4)')
     args = p.parse_args(argv)
     if args.self_test:
         self_test()
         return
     if args.offline and args.download:
         p.error('--offline and --download are mutually exclusive')
+    if not 1 <= args.download_attempts <= 12:
+        p.error('--download-attempts must be between 1 and 12')
     if not np.isfinite(args.before_minutes) or not np.isfinite(args.after_minutes) \
             or min(args.before_minutes, args.after_minutes) < 0:
         p.error('Invalid event padding')
@@ -617,8 +621,50 @@ def main(argv=None):
         )
         windows = merged_intervals(event_df)
         catalog_hash = _sha256(args.events_csv)
-    paths = []
-    missing = []
+    results, missing, failures = [], [], []
+
+    def checkpoint(*, complete=False):
+        """Create an explicit partial manifest after every completed or failed day."""
+        _atomic_text(args.output_dir / 'index.json', json.dumps({
+            'schema_version': SCHEMA_VERSION,
+            'status': 'complete' if complete else 'partial',
+            'fields_catalog': str(args.events_csv) if args.events_csv else None,
+            'fields_catalog_sha256': catalog_hash,
+            'products': ([FILE_RE.fullmatch(args.file.name).group(1)]
+                         if args.file else args.products),
+            'files': results,
+            'missing_source_product_days': missing,
+            'failed_source_product_days': failures,
+            'warning': ('Time coverage does not imply good particle statistics, '
+                        'valid quality flags, or association with switchbacks. '
+                        'One-second counts/rates are not energy-resolved flux.'),
+        }, indent=2) + '\n')
+
+    def process(product, path):
+        try:
+            manifest, action = _process(
+                path, product, args.output_dir, windows,
+                event_df, catalog_hash, args.resume
+            )
+        except (ValueError, OSError, KeyError, RuntimeError) as exc:
+            record = {'product': product, 'source_file': str(path),
+                      'error': f'{type(exc).__name__}: {exc}'}
+            failures.append(record)
+            print(f'[PROCESS FAILED] {product} {path.name}: '
+                  f'{record["error"]}', flush=True)
+            checkpoint()
+            return
+        print(f'[{action} {len(results)+1}] {product}: '
+              f'{manifest["retained_time_records"]} integrations; '
+              f'{manifest["median_integration_seconds"]}s duration',
+              flush=True)
+        results.append({
+            'product': product, 'source_file': str(path),
+            'npz': manifest['output_npz'],
+            'time_records': manifest['retained_time_records'],
+        })
+        checkpoint()
+
     if args.file:
         if args.plan_only:
             p.error('--plan-only cannot be used with --file')
@@ -627,7 +673,7 @@ def main(argv=None):
         match = FILE_RE.fullmatch(args.file.name)
         if not match:
             p.error('Unsupported high-resolution EPI-Hi filename')
-        paths = [(match.group(1).lower(), args.file)]
+        process(match.group(1).lower(), args.file)
     else:
         if windows is not None:
             days = required_days(windows, halo_days=args.day_halo)
@@ -639,65 +685,100 @@ def main(argv=None):
                 p.error('--end must be after --start')
             days = [first + timedelta(days=i) for i in range((last-first).days)]
         print(f'[HIGHRES PLAN] {len(windows) if windows is not None else 0} merged windows; '
-              f'{len(days)} UTC source days; products: {", ".join(args.products)}')
+              f'{len(days)} UTC source days; products: {", ".join(args.products)}',
+              flush=True)
         if args.plan_only:
             print('[PLAN ONLY] No remote access or output writes')
             return
+
         import requests
+        import time
         with requests.Session() as session:
             remote = {}
+            archive_error = None
             if not args.offline:
-                r = session.get(BASE_URL, timeout=(15,90))
-                r.raise_for_status()
-                remote = {name: _remote_index(r.text, name) for name in args.products}
+                for attempt in range(1, args.download_attempts+1):
+                    try:
+                        response = session.get(
+                            BASE_URL, timeout=(20, 60),
+                            headers={'Connection': 'close'}
+                        )
+                        response.raise_for_status()
+                        remote = {name: _remote_index(response.text, name)
+                                  for name in args.products}
+                        break
+                    except requests.RequestException as exc:
+                        archive_error = str(exc)
+                        if attempt < args.download_attempts:
+                            delay = min(2 ** (attempt-1), 12)
+                            print(f'[RETRY ARCHIVE {attempt}/{args.download_attempts}] '
+                                  f'{type(exc).__name__}; retry in {delay}s',
+                                  flush=True)
+                            time.sleep(delay)
+                if not remote:
+                    print('[ARCHIVE INDEX UNAVAILABLE] '
+                          f'{archive_error}; attempting cached files only',
+                          flush=True)
+
+            # Process each daily file as soon as it is acquired, so a later
+            # interrupted download never discards completed partitions.
             for product in args.products:
                 folder = args.cache / product
                 local = {}
-                for path in folder.glob('*.cdf'):
-                    m = FILE_RE.fullmatch(path.name)
-                    if m and m.group(1).lower() == product and path.stat().st_size:
-                        day, version = m.group(2), int(m.group(3))
-                        if day not in local or version > local[day][0]:
-                            local[day] = (version, path)
+                for cached in folder.glob('*.cdf'):
+                    m = FILE_RE.fullmatch(cached.name)
+                    if (m and m.group(1).lower() == product
+                            and cached.stat().st_size):
+                        key, version = m.group(2), int(m.group(3))
+                        if key not in local or version > local[key][0]:
+                            local[key] = (version, cached)
+
                 for day in days:
                     key = day.strftime('%Y%m%d')
-                    if args.offline:
-                        path = local.get(key, (None, None))[1]
-                    else:
-                        name = remote[product].get(key)
-                        path = folder/name if name else None
-                    if path is None or (not path.exists() and not args.download):
-                        missing.append(f'{product} {day}')
+                    name = remote.get(product, {}).get(key)
+                    remote_path = folder / name if name else None
+                    cached_path = local.get(key, (None, None))[1]
+                    # If index is available, its newest version wins. Offline
+                    # or missing-index days may use the verified local cache.
+                    path = (remote_path if remote_path is not None
+                            else cached_path)
+                    if path is None:
+                        missing.append(f'{product} {day}: no source CDF listed or cached')
+                        checkpoint()
                         continue
                     if not path.exists():
-                        path = _download(session, path.name, folder)
-                    paths.append((product, path))
-        if missing:
-            print(f'[MISSING] {len(missing)} source product-days: {", ".join(missing[:16])}')
-    results = []
-    for index, (product, path) in enumerate(paths, 1):
-        manifest, action = _process(path, product, args.output_dir, windows,
-                                    event_df, catalog_hash, args.resume)
-        print(f'[{action} {index}/{len(paths)}] {product}: '
-              f'{manifest["retained_time_records"]} integrations; '
-              f'{manifest["median_integration_seconds"]}s duration')
-        results.append({
-            'product': product, 'source_file': str(path), 'npz': manifest['output_npz'],
-            'time_records': manifest['retained_time_records'],
-        })
-    if not results:
-        raise RuntimeError('No usable source CDFs: check source-day availability')
+                        if not args.download:
+                            missing.append(f'{product} {day}: not cached; use --download')
+                            checkpoint()
+                            continue
+                        try:
+                            path = _download(
+                                session, path.name, folder,
+                                attempts=args.download_attempts,
+                            )
+                        except (requests.RequestException, OSError) as exc:
+                            failures.append({
+                                'product': product, 'source_file': path.name,
+                                'error': f'{type(exc).__name__}: {exc}',
+                            })
+                            print(f'[DOWNLOAD FAILED] {product} {day}: {exc}',
+                                  flush=True)
+                            checkpoint()
+                            continue
+                    process(product, path)
+
     if event_df is not None:
         _atomic_csv(event_df, args.output_dir / 'fields_event_windows.csv')
-    _atomic_text(args.output_dir / 'index.json', json.dumps({
-        'schema_version': SCHEMA_VERSION,
-        'fields_catalog': str(args.events_csv) if args.events_csv else None,
-        'fields_catalog_sha256': catalog_hash,
-        'files': results,
-        'warning': 'No temporal averaging. Quality and particle counting statistics still need analysis.',
-    }, indent=2) + '\n')
-    print(f'[SAVED] {len(results)} native-cadence partitions; index: {args.output_dir / "index.json"}')
-
+    complete = bool(results) and not failures and not missing
+    checkpoint(complete=complete)
+    print(f'[SAVED] {len(results)} native-cadence partitions; '
+          f'{len(missing)} missing; {len(failures)} failed; '
+          f'index: {args.output_dir / "index.json"}', flush=True)
+    if not complete:
+        print('[INCOMPLETE] Event windows with missing source products must not '
+              'be interpreted as quiet solar wind. Re-run with --resume '
+              'to retry remaining product-days.', flush=True)
+        raise SystemExit(2)
 
 if __name__ == '__main__':
     main()

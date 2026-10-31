@@ -202,7 +202,7 @@ in per-day compressed NPZ files. **It does not resample the particle data.**
 | HET_A_H_Rate_TS | HET-RATES10 | 10 s |
 | HET_A_Electrons_Rate_TS | HET-RATES10 | 10 s |
 
-`SECOND-RATES` is included for **1-second proton/electron quicklook**, including with the default high-resolution product selection,
+`SECOND-RATES` offers **1-second proton/electron quicklook** with reduced energy detail, but must currently be selected explicitly (`--products second-rates`) while its metadata handling is validated,
 but it has reduced energy-bin detail and is **not a substitute for the 10-second
 science products for quantitative studies**. Neither He nor separately identified heavy elements are interchangeable with the original Z=6–28 summary count-rate channel. The 300 s grouped CNO/Ne–Si/Fe directional product is also supported via `--products let1-rates300`, but is not the default.
 
@@ -228,12 +228,23 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --plan-only
 ```
 
-Run the native-cadence archive acquisition only **after** real CDF validation (default: 10 s LET1, 60 s LET1 heavy ions, 10 s HET, and optional-for-physics 1 s quicklook):
+Run the native-cadence archive acquisition only **after** real CDF validation (default: 10 s LET1, 60 s LET1 heavy ions and 10 s HET):
 
 ```bash
 python code/IS_O_IS/particle_data_reader.py --highres \
   --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
   --download --resume
+```
+
+The optional `SECOND-RATES` 1-second product currently needs an additional
+dependency-metadata inspection: one downloaded November 6 file was rejected because
+the strict reader could not identify its time-aligned `_Flux` arrays. The ISʘIS
+user guide describes such flux arrays, so **do not interpret this as proof of
+missing measurements**. To inspect the local CDF without changing anything:
+
+```bash
+python code/IS_O_IS/particle_data_reader.py --inspect \
+  data/isois/epihi_cdf/second-rates/psp_isois-epihi_l2-second-rates_20181106_v26.cdf
 ```
 
 Outputs under `data/isois/highres/` include `index.json`, one

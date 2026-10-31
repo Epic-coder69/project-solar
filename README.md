@@ -249,7 +249,9 @@ python code/IS_O_IS/particle_data_reader.py --inspect \
 
 Outputs under `data/isois/highres/` include `index.json`, one
 `<source-file>.npz` per product/day, accompanying `.manifest.json`, and
-per-file `.coverage.csv` time-overlap audits. Open NPZ using
+per-file `.coverage.csv` time-overlap audits. Event-window NPZ files include
+an `_events_<fingerprint>` suffix to prevent full-day reprocessing from
+overwriting event-targeted data. `index.json` summarizes the most recent run. Open NPZ using
 `np.load(filename, allow_pickle=False)`. Timestamps are UTC Unix
 **nanoseconds**. Coverage is time overlap **before interpreting quality flags**.
 Do not treat a sample overlapping a switchback as evidence of particle

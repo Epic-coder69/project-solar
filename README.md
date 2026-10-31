@@ -341,6 +341,30 @@ windows automatically invalidate stale resumes.
 available disk and network capacity (e.g. `--max-total-mib 8192`).
 `--event-products spc-l2i,spc-l3i` restricts the source products if needed.
 
+**First-event evidence and known source incompleteness (2018-11-01):**
+The FIELDS candidate starts at 01:32:05 UTC and ends at 02:00:48 UTC
+(28m43s). Its audit bundle showed 13 saved product archives, zero
+variables skipped relative to the *source CDFs*, and non-fill event-time
+science measurements in all 13. This does **not** imply the original
+published product's expected variables are all present. For instance,
+the captured SPC L2 time-subset CDF has `Epoch`, current and `mv_lo`
+but lacks `measurement_time` and `mv_hi` even though these quantities
+are documented in the nominal SPC L2 description; therefore derived
+per-voltage-step timestamps are explicitly **unavailable** for this
+event. The captured SPA electron 3D subset lacks `THETA`, `PHI`
+and `QUALITY_FLAG`; the alpha 3D subset lacks `THETA` and `PHI`.
+Those variables must not be reconstructed from guesses. SPAN-B's
+electron 3D file does provide angles. Whether these differences reflect
+the 2018 native CDF itself or the NASA time-subset transformation needs
+a source-versus-subset comparison before making maximum-coverage claims.
+
+The offline `--audit-events` command now inspects saved NPZ quality
+flags at exact FIELDS event times, reports their zero/nonzero counts,
+and checks for missing science-critical fields. It does not download
+new data. The bundle can be re-created after a `git pull` without
+re-extracting the event:
+`python project.py sweap --audit-events --bundle-audit --event-out data/sweap/events_v2`.
+
 **Scientific caveats:** The 13 selected sources represent eight SWEAP
 measurement families, not every possible NASA mission dataset or
 unreleased raw Level 0/1 telemetry. L2 is calibrated detector data;

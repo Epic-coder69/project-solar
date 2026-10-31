@@ -1017,39 +1017,71 @@ def recover_event_sources(out_dir, cache, *, max_file_mib=1024,
                     status["original_recovery"] = {
                         "status": result["status"], "archive": result["archive"],
                         "comparison": result["variable_inventory_comparison"],
-                        "read_error_count": len(result["error_variables"])}
+                        "saved_variable_names": [n for n,v in result["variables"].items()
+                                                  if v.get("status") == "saved"],
+                         "read_error_count": len(result["error_variables"])}
             except (requests.RequestException, ValueError, OSError) as exc:
                 status["original_download"] = {
                     "status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-        missing = status["expected_missing"]
-        if try_targeted and missing and budget[0] > 0:
-            try:
-                targeted = request_targeted_native_subset(
-                    product, event["window_start_utc"],
-                    event["window_end_exclusive_utc"], missing, cache)
-                if targeted["status"] == "found":
-                    outcome, used = bounded_download(
-                        targeted["url"], targeted["path"],
-                        int(max_file_mib * 1048576), budget[0])
-                    budget[0] -= used
-                    targeted["status"] = outcome
-                status["targeted_download"] = {
-                    k: cdf_json(v) for k,v in targeted.items()}
-                if targeted["status"] in ("cached", "downloaded"):
-                    result = write_recovered_source(
-                        targeted["path"], product, event, out_dir,
-                        "targeted_cdas", expected=subset_variables)
-                    status["targeted_recovery"] = {
-                        "status": result["status"], "archive": result["archive"],
-                        "comparison": result["variable_inventory_comparison"],
-                        "read_error_count": len(result["error_variables"])}
-            except (requests.RequestException, ValueError, OSError) as exc:
-                status["targeted_download"] = {
-                    "status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+        # Attempt all variables in the NASA dataset catalog missing from the
+        # saved time subset, not only a small hand-picked list. Eight variables
+        # per request keeps NASA URLs manageable and isolates API failures.
+        subset_lower = {v.lower() for v in subset_variables}
+        catalog = inventories[product].get("variable_names", [])
+        missing = [n for n in catalog if n.lower() not in subset_lower]
+        missing += [n for n in status["expected_missing"]
+                    if n.lower() not in {v.lower() for v in missing}]
+        recovered_from_original = {
+            n.lower() for n in status.get("original_recovery", {})
+            .get("saved_variable_names", [])
+        }
+        missing = list(dict.fromkeys(
+            n for n in missing if n.lower() not in recovered_from_original))
+        status["catalog_missing_variable_count"] = len(
+            {n.lower() for n in catalog} - subset_lower)
+        status["targeted_variable_candidates"] = missing
+        status["targeted_batches"] = []
+        if try_targeted and missing:
+            for batch_id, offset in enumerate(range(0, len(missing), 8), 1):
+                names = missing[offset:offset+8]
+                if budget[0] <= 0:
+                    status["targeted_batches"].append({
+                        "variables": names, "status": "skipped_total_size_budget"})
+                    continue
+                attempt = {"variables": names}
+                try:
+                    targeted = request_targeted_native_subset(
+                        product, event["window_start_utc"],
+                        event["window_end_exclusive_utc"], names, cache)
+                    if targeted["status"] == "found":
+                        outcome, used = bounded_download(
+                            targeted["url"], targeted["path"],
+                            int(max_file_mib * 1048576), budget[0])
+                        budget[0] -= used
+                        targeted["status"] = outcome
+                    attempt["download"] = {
+                        k: cdf_json(v) for k, v in targeted.items()}
+                    attempt["status"] = targeted["status"]
+                    if targeted["status"] in ("cached", "downloaded"):
+                        result = write_recovered_source(
+                            targeted["path"], product, event, out_dir,
+                            f"targeted_cdas_batch_{batch_id:02d}",
+                            expected=subset_variables)
+                        attempt["recovery"] = {
+                            "status": result["status"],
+                            "archive": result["archive"],
+                            "added_variables": result["variable_inventory_comparison"][
+                                "original_only"],
+                            "read_error_count": len(result["error_variables"])}
+                except (requests.RequestException, ValueError, OSError) as exc:
+                    attempt["status"] = "error"
+                    attempt["reason"] = f"{type(exc).__name__}: {exc}"
+                status["targeted_batches"].append(attempt)
         rows.append(status)
         print(f"[SOURCE COMPARE] {product}: original="
               f"{status.get('original_download', {}).get('status', 'not_requested')}; "
-              f"targeted={status.get('targeted_download', {}).get('status', 'not_requested')}",
+              f"targeted batches={len(status.get('targeted_batches', []))}; "
+              f"catalog missing={status.get('catalog_missing_variable_count', 0)}",
               flush=True)
     folder = out_dir / "source_recovery"
     folder.mkdir(parents=True, exist_ok=True)

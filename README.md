@@ -1,5 +1,11 @@
 # Project Solar
 
+> **Start here:** [Repository map & safe workflow](docs/REPOSITORY_MAP.md) shows
+> every current instrument script, the distinction between local-only
+> `data/` and GitHub-tracked code, and why the GitHub
+> `code/IS⊙IS/` path may differ from older `code/IS_O_IS/` commands.
+> Do not rename folders or clean caches without inspecting local changes.
+
 **Parker Solar Probe | Magnetic-field structures, energetic particles, and their correlations**
 
 ## Research objective
@@ -33,11 +39,12 @@ See [The_Research.md](The_Research.md) for scientific background, research quest
 | **FIELDS magnetic-field acquisition and rotation screening** | Implemented and run on the November–December 2018 interval |
 | **FIELDS detailed magnetic-event characterization** | Implemented; candidate boundaries/physical classification still require independent validation |
 | **Strong magnetic-candidate archival** | Completed for the November–December 2018 run, with checksums and a retention manifest |
-| **IS⊙IS summary-rate reader** | Initial implementation in GitHub; survey-only, requires real-CDF end-to-end verification |
-| **IS⊙IS event-centered rate characterization** | Initial implementation; pre/during/post comparisons against FIELDS event times, not a validated correlation test |
-| **Calibrated EPI-Lo / EPI-Hi flux and energy-spectral analysis** | Not yet implemented |
+| **IS⊙IS summary-rate survey** | Ran for November–December 2018; 597/599 magnetic candidates have overlapping hourly survey integrations; not event-resolving |
+| **IS⊙IS EPI-Hi native-cadence reader** | Implemented and processed published 1/10/60-second products for 295/599 candidates at nominal event resolution |
+| **IS⊙IS hourly background and multiresolution coverage audit** | Implemented; 295 fine-event/flank candidates, 302 additional with HET hourly background, 2 lacking audited observations; science-grade validation pending |
+| **Calibrated EPI-Lo / EPI-Hi flux and energy-spectral *science analysis*** | Instrument variables preserved, but flux/energy comparability, quality flags and event-level particle significance not yet validated |
 | **Matched controls, statistical tests, and final cross-instrument correlations** | Not yet implemented |
-| **SWEAP plasma and additional FIELDS wave/electric-field correlations** | Planned extensions |
+| **SWEAP plasma** | Exploratory CDF inspector implemented; verified switchback/plasma correlations pending |
 
 ### FIELDS survey: November 1–December 31, 2018
 
@@ -108,7 +115,10 @@ Project Solar/
     │   └── external_libraries_requirements.txt
     ├── IS⊙IS/
     │   ├── particle_data_reader.py
-    │   └── particle_data_analysis.py
+    │   ├── particle_data_analysis.py
+    │   ├── particle_highres_reader.py
+    │   ├── particle_coverage_audit.py
+    │   └── particle_multires_coverage.py
     └── SWEAP/
         └── sweap_data_reader.py
 ```

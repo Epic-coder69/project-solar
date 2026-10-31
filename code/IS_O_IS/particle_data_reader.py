@@ -858,4 +858,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if '--highres' in sys.argv[1:]:
+        # Separate L2 EPI-Hi spectra; the legacy hourly survey CLI is unchanged.
+        from particle_highres_reader import main as highres_main
+        highres_main([arg for arg in sys.argv[1:] if arg != '--highres'])
+    else:
+        main()

@@ -157,6 +157,36 @@ downloaded files, are not overwritten. Subsets live under
 subset exceeds the same download budget, the report records that condition
 instead of silently omitting the product.
 
+**Measured first-pass SWEAP survey outcome (2018-11-06):** The original
+bounded run inspected **8/13 products** and skipped 5 oversized daily CDFs,
+with 0 errors. The follow-up bounded NASA time-subset run inspected **all 5
+remaining products**, with 0 errors or size-limit skips. Thus **all 13
+product variants across the eight defined families have now been inspected
+against real NASA CDFs**, although this does not establish scientifically
+valid measurements for all 599 events.
+
+| Product family | Variants | Records per tested 8-minute window |
+| --- | --- | ---: |
+| SPC L2 charge-flux spectra | 1 | 550 |
+| SPC L3 proton moments | 1 | 549 |
+| SPAN-I L2 proton flux (3D) | 1 | 17 |
+| SPAN-I L2 alpha flux (3D, proton-contaminated) | 1 | 8 |
+| SPAN-I L3 partial moments | Proton / alpha | 17 / 8 |
+| SPAN-E L2 3D distributions | SPA / SPB | 17 / 17 |
+| SPAN-E L2 summed energy spectra | SPA / SPB | 275 / 275 |
+| SPAN-E L3 pitch-angle distributions | Combined / SPA / SPB | 17 / 17 / 17 |
+
+**Interpretation:** These counts show EPOCH record availability in the chosen
+test windows, not actual integration duration, uninterrupted valid coverage,
+quality-flag pass rates, or co-observation of a FIELDS switchback. The
+machine-local full survey reports are
+`data/sweap/survey_20181106.json` and
+`data/sweap/survey_large_families_20181106.json` (ignored by Git). Next:
+review variable axes, quality flags, valid values and timestamp spacing,
+then audit the specific candidate intervals without extrapolating one
+eight-minute window to the entire mission.
+
+
 This writes product-by-product variable names, units, array dimensions,
 sampled numeric values, measured EPOCH spacing, and quality-flag variable
 names. Missing days, unavailable products, oversized downloads, and errors

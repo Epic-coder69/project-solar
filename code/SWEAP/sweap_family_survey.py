@@ -254,4 +254,35 @@ def self_test():
     assert chosen[0] == 22 and chosen[1].endswith("v22.cdf")
     assert len(CATALOG) == 13 and len({v[0] for v in CATALOG.values()}) == 8
     assert set(CAVEATS) == {v[0] for v in CATALOG.values()}
-    print("PASS: SWEAP eight-family catalog, 13 product IDs, and exact-day matching")
+    # A complete 3D flux day could be enormous. Confirm that previewing
+    # it only asks cdflib for ONE native time record and preserves axes.
+    from types import SimpleNamespace
+    class FakeCDF:
+        def varinq(self, name):
+            return SimpleNamespace(Last_Rec=100, Dim_Sizes=[8, 32, 8])
+        def varget(self, name, *, startrec, endrec):
+            assert startrec == endrec == 4
+            return np.arange(2048).reshape((1, 8, 32, 8))
+    sample = _peek(FakeCDF(), "synthetic_proton_3d_flux", 4)
+    assert sample["returned_shape"] == [1, 8, 32, 8]
+    assert sample["values"] == [0., 1., 2., 3., 4., 5.]
+    # Test the size cap without any real network traffic.
+    from unittest.mock import patch
+    from tempfile import TemporaryDirectory
+    class FakeResponse:
+        headers = {"Content-Length": "99999999"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def raise_for_status(self):
+            pass
+        def iter_content(self, _):
+            raise AssertionError("oversized download must not begin")
+    with TemporaryDirectory() as folder, patch.object(requests, "get", return_value=FakeResponse()):
+        state, count = bounded_download("https://example.invalid/test.cdf",
+                                        Path(folder) / "test.cdf", 4096, 4096)
+        assert state == "skipped_size_budget" and count == 0
+        assert not list(Path(folder).glob("*.part"))
+    print("PASS: SWEAP eight-family catalog, 13 product IDs, exact-day selection, "
+          "3D one-record sampling, and strict download budgets")

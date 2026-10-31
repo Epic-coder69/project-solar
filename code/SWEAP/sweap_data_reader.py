@@ -1662,9 +1662,49 @@ def event_self_test():
             assert next(iter(audited["event_native_quality_by_event_product"].values()))["status"] == "audited"
             assert next(iter(audited["event_native_quality_by_event_product"].values()))["unflagged_zero"] == 4
             assert audited["segments_with_unflagged_zero"] == 1
-    print("PASS: SWEAP event UTC windows, 120s context, grouped subsets, "
-          "3D native arrays, fill masks, SPC nanosecond step times, "
-          "metadata audit, NPZ/manifest and resume")
+
+            assert compare_variable_inventories(
+                ["Epoch", "EFLUX"], ["Epoch", "EFLUX", "PHI", "THETA"],
+                ["THETA", "PHI"])["expected_recoverable_from_original"] == [
+                    "THETA", "PHI"]
+            class FakeNASAResponse:
+                def raise_for_status(self): pass
+                def json(self):
+                    return {"VariableDescription": [
+                        {"Name": "Epoch"}, {"Name": "MEASUREMENT_TIME"}]}
+            with patch("requests.get", return_value=FakeNASAResponse()) as remote:
+                inventory = cdas_variable_inventory("spc-l2i")
+                assert inventory["variable_count"] == 2
+                assert remote.call_args.args[0].endswith(
+                    "/PSP_SWP_SPC_L2I/variables")
+
+            # Feed one original-source comparison through the full recovery
+            # pipeline without network I/O, using synthetic native CDF arrays.
+            source_meta = next(target.glob("spc-l3i/*.json"))
+            saved_metadata = json.loads(source_meta.read_text(encoding="utf-8"))
+            saved_metadata["source_kind"] = "time_subset"
+            source_meta.write_text(json.dumps(saved_metadata), encoding="utf-8")
+            manifest = pd.read_csv(target / "event_manifest.csv")
+            manifest.loc[0, "source_kind"] = "time_subset"
+            manifest.to_csv(target / "event_manifest.csv", index=False)
+            with (patch.object(sys.modules[__name__], "available_file",
+                               return_value={"status": "cached",
+                                             "path": str(Path(directory) / "original.cdf")}),
+                  patch.object(sys.modules[__name__], "cdas_variable_inventory",
+                               return_value={"status": "listed",
+                                             "variable_names": ["Epoch", "flux"]})):
+                recovered = recover_event_sources(
+                    target, Path(directory) / "cache",
+                    try_targeted=False, max_segments=1)
+                assert recovered["segments_checked"] == 1
+                comparison = recovered["sources"][0]["original_recovery"]
+                assert comparison["status"] == "saved"
+                assert Path(comparison["archive"]).is_file()
+                assert comparison["comparison"]["original_variable_count"] == 8
+
+    print("PASS: SWEAP exact event windows, 3D native arrays, quality audit, "
+          "SPC step timing, NASA variable catalog, original/targeted comparison, "
+          "source recovery, NPZ manifest and resume")
 
 
 def main():

@@ -907,7 +907,7 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib,
                  groups=None, subset_state=None):
     """Reuse a daily CDF when small, else request a NASA time subset."""
     key = (product, str(day))
-    if key not in state:
+    if key not in state or state[key]["status"] == "error":
         try:
             found = available_file(product, day, cache)
             if found["status"] == "found":
@@ -932,7 +932,14 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib,
             break
     subset_key = (product, str(day), request_start.isoformat(), request_stop.isoformat())
     if subset_state is not None and subset_key in subset_state:
-        return subset_state[subset_key]
+        remembered = subset_state[subset_key]
+        if remembered["status"] in ("cached", "downloaded"):
+            return remembered
+        if request_start != start or request_stop != stop:
+            # A large merged NASA request may exceed its size cap, while
+            # the much smaller individual event can still fit.
+            return event_source(product, day, start, stop, cache, state,
+                                budget, file_mib, groups={}, subset_state=subset_state)
     if budget[0] <= 0:
         return {"status": "skipped_total_size_budget"}
     try:
@@ -945,6 +952,10 @@ def event_source(product, day, start, stop, cache, state, budget, file_mib,
             subset["status"] = status
         if subset_state is not None:
             subset_state[subset_key] = subset
+        if subset["status"] not in ("cached", "downloaded") and (
+                request_start != start or request_stop != stop):
+            return event_source(product, day, start, stop, cache, state,
+                                budget, file_mib, groups={}, subset_state=subset_state)
         return subset
     except (requests.RequestException, OSError, ValueError) as exc:
         return {"status": "error", "reason": str(exc)}

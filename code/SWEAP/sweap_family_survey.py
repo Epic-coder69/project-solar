@@ -153,6 +153,7 @@ def inspect(path, window_start, minutes, variable_limit=20):
               "variable_count": len(names), "variables": [],
               "quality_flag_names": [x for x in names if "flag" in x.lower() or "dqf" in x.lower()]}
     row = 0
+    window_has_records = False
     if times is not None and len(times):
         start = pd.Timestamp(window_start)
         start = start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
@@ -160,6 +161,7 @@ def inspect(path, window_start, minutes, variable_limit=20):
         ids = np.flatnonzero((times >= start) & (times < end))
         if len(ids):
             row = int(ids[0])
+            window_has_records = True
         delta = np.diff(times.as_unit("ns").asi8) / 1e9
         delta = delta[delta > 0]
         within = np.diff(times[ids].as_unit("ns").asi8) / 1e9 if len(ids) > 1 else np.array([])
@@ -180,7 +182,8 @@ def inspect(path, window_start, minutes, variable_limit=20):
                      "description": str(attrs.get("CATDESC", ""))[:160],
                      "depend_0": str(attrs.get("DEPEND_0", "")),
                      "var_type": str(attrs.get("VAR_TYPE", ""))}
-            if name != epoch and int(v.Last_Rec) >= row:
+            # Never show an outside-window record as an example of this window.
+            if name != epoch and window_has_records and int(v.Last_Rec) >= row:
                 entry["example"] = _peek(cdf, name, row)
             result["variables"].append(entry)
         except (ValueError, OSError, TypeError, AttributeError) as exc:
@@ -224,6 +227,13 @@ def survey(day, cache, output, *, minutes=8, start=None, catalog_only=False,
         results["products"].append(item)
         rows = item.get("cdf", {}).get("timing", {}).get("window_records", "-")
         print(f"[{family:21}] {name:25} {item['status']:24} window_records={rows}", flush=True)
+    results["family_status"] = {
+        family: {"inspected_products": [p["product"] for p in results["products"]
+                                        if p["family"] == family and p["status"] == "inspected"],
+                 "product_statuses": {p["product"]: p["status"] for p in results["products"]
+                                      if p["family"] == family}}
+        for family in results["families"]
+    }
     results["summary"] = {
         "inspected": sum(p["status"] == "inspected" for p in results["products"]),
         "not_available": sum(p["status"] == "not_available_on_date" for p in results["products"]),

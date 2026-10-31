@@ -236,6 +236,8 @@ def main():
                    help="Survey download cap per CDF file in MiB (default 50)")
     p.add_argument("--max-total-mib", type=float, default=250,
                    help="Survey total download cap in MiB (default 250)")
+    p.add_argument("--subset-on-limit", action="store_true",
+                   help="Ask NASA for an 8-minute CDF subset when the daily file exceeds the size cap")
     p.add_argument("--families", help="Optional comma-separated survey families (see --list-products)")
 
     p.add_argument("--product", default="spc-l3i", choices=PRODUCTS)
@@ -274,7 +276,8 @@ def main():
         output = args.json or args.cache_dir / f"survey_{day:%Y%m%d}.json"
         survey(day, args.cache_dir, output, minutes=args.minutes, start=args.start,
                catalog_only=args.catalog_only, max_file_mib=args.max_file_mib,
-               max_total_mib=args.max_total_mib, families=wanted)
+               max_total_mib=args.max_total_mib, families=wanted,
+               subset_on_limit=args.subset_on_limit)
         return
     if not np.isfinite(args.minutes) or args.minutes <= 0:
         p.error("--minutes must be positive")

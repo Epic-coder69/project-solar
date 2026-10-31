@@ -1541,6 +1541,49 @@ def _epihi_self_test():
                for x in meta['skipped_zero_record_variables'])
     assert 'A_H_Flux' in result
 
+    # HET 300s archives can have an Epoch axis but zero observations
+    # in every expected heavy-ion science variable. This is unavailable
+    # source data, never a string of observed zero particle counts.
+    class ZeroRecordHET300CDF(FakeCDF):
+        def __init__(self):
+            super().__init__()
+            self.vars = {
+                'Epoch': t0 + np.arange(5, dtype=np.int64)*300_000_000_000,
+                'Epoch_DELTA': np.array([150e9]),
+            }
+            for side in ('A', 'B'):
+                for species, bins in (('CNO', 2), ('FeGroup', 1),
+                                      ('NetoSi', 1)):
+                    self.vars[f'{side}_{species}_SECT_Rate'] = np.empty(
+                        (0, bins, 25))
+        def varattsget(self, name):
+            if name.endswith('_SECT_Rate'):
+                return {'DEPEND_0': 'Epoch', 'UNITS': 's!E-1!N'}
+            return super().varattsget(name)
+
+    missing_heavy = ZeroRecordHET300CDF()
+    try:
+        decode(missing_heavy,
+               epoch_decoder=lambda _: missing_heavy.vars['Epoch'],
+               product='het-rates300')
+    except NoScienceRecords as exc:
+        assert 'all six HET heavy-ion rate arrays have zero records' in str(exc)
+    else:
+        raise AssertionError('Empty HET science product treated as particle data')
+    # A damaged file with a missing variable is different from an official
+    # complete set of six empty arrays; it must still be a real error.
+    del missing_heavy.vars['B_NetoSi_SECT_Rate']
+    try:
+        decode(missing_heavy,
+               epoch_decoder=lambda _: missing_heavy.vars['Epoch'],
+               product='het-rates300')
+    except NoScienceRecords:
+        raise AssertionError('Malformed HET product incorrectly called empty')
+    except ValueError as exc:
+        assert 'no time-aligned' in str(exc)
+    else:
+        raise AssertionError('Malformed HET product was not rejected')
+
     # Read-only HET CDF inspection must distinguish declared, zero-record
     # sectored rate arrays from actual observational coverage.
     with TemporaryDirectory() as folder:

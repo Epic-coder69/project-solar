@@ -1065,7 +1065,9 @@ def decode(cdf, windows=None, epoch_decoder=_cdf_epoch_ns, product=None):
         if not sectored:
             raise ValueError(
                 f'{product} has no time-aligned 5-minute heavy-ion sectored '
-                f'count-rate arrays (available rate variables: {rate_names})'
+                f'count-rate arrays (available rate variables: {rate_names}; '
+                f'zero-record variables: '
+                f'{[x["name"] for x in skipped_empty if x["name"].endswith("_Rate")]})'
             )
         measurement_class = 'sectored_heavy_ion_count_rates_only'
     elif flux_names:
@@ -1582,10 +1584,45 @@ def _epihi_self_test():
     print('PASS: EPI-Hi timing, energy axes, 1s counts, flags, NPZ, network retry and safe Range resume')
 
 
+def inspect_epihi_cdf(path):
+    """Read-only inventory for a local EPI-Hi CDF; never invent data rows."""
+    import cdflib
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f'CDF not found: {path}')
+    cdf = cdflib.CDF(str(path))
+    info = cdf.cdf_info()
+    names = list(info.zVariables) + list(info.rVariables)
+    print(f'[CDF INSPECT] {path}')
+    if 'Epoch' not in names:
+        raise ValueError('CDF lacks Epoch time coordinate')
+    epoch = np.asarray(cdf.varget('Epoch'))
+    print(f'  Epoch records: {len(epoch)}')
+    found = 0
+    for name in names:
+        if not name.endswith(('_Rate', '_Flux')):
+            continue
+        attrs = cdf.varattsget(name)
+        dependency = _attr(attrs, 'DEPEND_0')
+        value = np.asarray(cdf.varget(name))
+        records = int(value.shape[0]) if value.ndim else 0
+        state = ('ZERO RECORDS' if records == 0 else
+                 'TIMING MISMATCH' if dependency == 'Epoch' and records != len(epoch)
+                 else 'time-aligned' if dependency == 'Epoch' else 'non-Epoch')
+        print(f'  {name}: shape={tuple(value.shape)}; '
+              f'DEPEND_0={dependency}; {state}')
+        found += 1
+    print(f'[CDF INSPECT] {found} rate/flux variables; '
+          'inspection only, no data created')
+    return 0
+
+
 def _epihi_main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--self-test', action='store_true')
     p.add_argument('--file', type=Path, help='Decode one existing EPI-Hi CDF')
+    p.add_argument('--inspect-cdf', type=Path,
+                   help='Read-only inventory of Epoch and real rate/flux array shapes')
     p.add_argument('--events-csv', type=Path)
     p.add_argument('--products', nargs='+', choices=EPIHI_PRODUCTS, default=list(EPIHI_DEFAULT_PRODUCTS),
                    help='Select EPI-Hi products (1s rates-only quicklook; 10s/60s energy-resolved science)')
@@ -1609,6 +1646,8 @@ def _epihi_main(argv=None):
     p.add_argument('--download-attempts', type=int, default=4,
                    help='Retries per source CDF for transient network errors (default: 4)')
     args = p.parse_args(argv)
+    if args.inspect_cdf:
+        return inspect_epihi_cdf(args.inspect_cdf)
     if args.self_test:
         _epihi_self_test()
         return
@@ -1827,6 +1866,8 @@ def help_text():
   python project.py isois-reader --self-test
 
 Use 'epihi --help' or 'summary --help' for full compatible options.
+Use 'epihi --inspect-cdf /path/to/local.cdf' to inspect variable record
+counts and shapes read-only (useful for empty HET 5-minute products).
 All cached source CDFs, native NPZs and summary CSV formats stay unchanged.
 No download happens unless --download is explicitly requested.
 """)

@@ -114,6 +114,46 @@ def bounded_download(url, path, max_bytes, remaining_bytes):
         partial.unlink(missing_ok=True)
 
 
+def subset_for_window(product, day, cache, start, minutes):
+    """Request a NASA-generated, native-resolution CDF for just the UTC window.
+
+    This is a server-side time subset (NOT averaging/resampling). Never mix
+    these files with the official original daily CDFs. The CDAWeb REST
+    service can return errors or decline to subset particular large products.
+    """
+    dataset = CATALOG[product][1]
+    begin = pd.Timestamp(start or day.isoformat())
+    begin = begin.tz_localize("UTC") if begin.tzinfo is None else begin.tz_convert("UTC")
+    stop = begin + pd.Timedelta(minutes=minutes)
+    # REST endpoint has whole-second ISO 8601 timestamps; round outwards.
+    request_begin = begin.floor("s")
+    request_stop = stop.ceil("s")
+    time_label = lambda t: t.strftime("%Y%m%dT%H%M%SZ")
+    lo, hi = time_label(request_begin), time_label(request_stop)
+    path = cache / "_subsets" / product / f"{product}_{lo}_{hi}.cdf"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        return {"status": "cached", "path": str(path), "mode": "time_subset"}
+    endpoint = f"{CDAS}/{dataset}/data/{lo},{hi}/ALL-VARIABLES?format=cdf"
+    response = requests.get(endpoint, timeout=(20, 120),
+                            headers={"Accept": "application/json"})
+    response.raise_for_status()
+    payload = response.json()
+    descriptions = payload.get("FileDescription", [])
+    if isinstance(descriptions, dict):
+        descriptions = [descriptions]
+    # Do not download an arbitrary webpage or an ambiguous multi-file result.
+    urls = [entry.get("Name", "") for entry in descriptions
+            if entry.get("Name", "").startswith("https://")
+            and urlparse(entry.get("Name", "")).path.lower().endswith(".cdf")]
+    if len(urls) != 1:
+        message = payload.get("Status", payload.get("CdasStatus", {}))
+        return {"status": "subset_unavailable", "catalog_url": endpoint,
+                "reason": f"Expected one CDF link, got {len(urls)}; status={str(message)[:200]}"}
+    return {"status": "found", "path": str(path), "url": urls[0],
+            "mode": "time_subset", "request_url": endpoint}
+
+
 def _epoch(cdf):
     import cdflib
     info = cdf.cdf_info()
@@ -192,12 +232,13 @@ def inspect(path, window_start, minutes, variable_limit=20):
 
 
 def survey(day, cache, output, *, minutes=8, start=None, catalog_only=False,
-           max_file_mib=50, max_total_mib=250, families=None):
+           max_file_mib=50, max_total_mib=250, families=None, subset_on_limit=False):
     """Survey every family; report missing/oversized/error products separately."""
     selected = [(name, cfg) for name, cfg in CATALOG.items()
                 if not families or cfg[0] in families]
     results = {"date": day.isoformat(), "window_minutes": minutes,
                "mode": "catalog_only" if catalog_only else "bounded_cdf_inspection",
+               "subset_on_limit": subset_on_limit,
                "families": sorted({cfg[0] for _, cfg in selected}), "products": [],
                "caveats": CAVEATS, "limitations": [
                    "Found in NASA catalog is not the same as observed valid samples.",
@@ -218,6 +259,27 @@ def survey(day, cache, output, *, minutes=8, start=None, catalog_only=False,
                 remaining -= size
                 item["status"] = state
                 item["bytes_downloaded"] = size
+            if item["status"] == "skipped_size_budget" and subset_on_limit and not catalog_only:
+                subset = subset_for_window(name, day, cache, start, minutes)
+                item["original_daily_status"] = "skipped_size_budget"
+                item["subset_status"] = subset["status"]
+                item["subset_request_url"] = subset.get("request_url", subset.get("catalog_url"))
+                if subset["status"] in ("found", "cached"):
+                    found = subset
+                    item["file"] = found["path"]
+                    item["source_url"] = found.get("url", "local_cache")
+                    item["mode"] = "time_subset"
+                    if subset["status"] == "found":
+                        state, size = bounded_download(found["url"], found["path"],
+                                                       int(max_file_mib * 1048576), remaining)
+                        remaining -= size
+                        item["bytes_downloaded"] = size
+                        item["status"] = state
+                    else:
+                        item["status"] = "cached"
+                else:
+                    item["status"] = subset["status"]
+                    item["reason"] = subset.get("reason")
             if item["status"] in ("cached", "downloaded") and not catalog_only:
                 item["cdf"] = inspect(found["path"], start or day.isoformat(), minutes)
                 item["status"] = "inspected"
@@ -238,6 +300,7 @@ def survey(day, cache, output, *, minutes=8, start=None, catalog_only=False,
         "inspected": sum(p["status"] == "inspected" for p in results["products"]),
         "not_available": sum(p["status"] == "not_available_on_date" for p in results["products"]),
         "size_limited": sum(p["status"] == "skipped_size_budget" for p in results["products"]),
+        "subset_unavailable": sum(p["status"] == "subset_unavailable" for p in results["products"]),
         "errors": sum(p["status"] == "error" for p in results["products"])}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(results, indent=2, default=str) + "\n", encoding="utf-8")

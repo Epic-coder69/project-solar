@@ -1805,6 +1805,16 @@ def event_self_test():
                 assert comparison["status"] == "saved"
                 assert Path(comparison["archive"]).is_file()
                 assert comparison["comparison"]["original_variable_count"] == 8
+            # Recovery metadata must not be treated as a 14th SWEAP product.
+            second_audit = audit_event_archives(target)
+            assert second_audit["product_segments"] == 1
+            assert "nan|nan|nan" not in second_audit["event_native_quality_by_event_product"]
+            with __import__("zipfile").ZipFile(bundle_event_audit(target)) as zipped:
+                names = zipped.namelist()
+                assert len(names) == len(set(names)), "Duplicate audit ZIP entries"
+                assert "source_recovery/source_comparison.json" in names
+            assert unlabeled_quality_bits(np.array([4352, 4356, 4384])) == {
+                "2": 1, "5": 1, "8": 3, "12": 3}
 
     print("PASS: SWEAP exact event windows, 3D native arrays, quality audit, "
           "SPC step timing, NASA variable catalog, original/targeted comparison, "

@@ -184,6 +184,7 @@ To plot a particular FIELDS switchback or different source channels:
 python project.py isois-analyzer plot-events --list-events
 python project.py isois-analyzer plot-events --event-id EVENT_ID --channels LET1_A_H HET_A_H HET_A_Electrons LET1_R26A_CNO
 python project.py isois-analyzer plot-events --max-events 3 --energy-index 1 --sector-index 0
+python project.py isois-analyzer plot-events --all-events --before-seconds 600 --after-seconds 600
 ```
 
 Energy and sector indices select one source-native bin; the analyzer never

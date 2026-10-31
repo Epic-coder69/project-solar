@@ -296,14 +296,16 @@ def _process(path, product, output_dir, windows, event_df, catalog_hash, resume)
     match = FILE_RE.fullmatch(path.name)
     if not match or match.group(1).lower() != product:
         raise ValueError(f'Incorrect {product} filename: {path}')
-    dest = output_dir / product / (path.stem + '.npz')
-    manifest_file = Path(str(dest) + '.manifest.json')
     fingerprint = hashlib.sha256(json.dumps({
         'cdf': _sha256(path), 'catalog': catalog_hash, 'product': product,
         'windows': [[a.isoformat(), b.isoformat()] for a, b in windows]
             if windows is not None else None,
         'schema': SCHEMA_VERSION,
     }, sort_keys=True).encode()).hexdigest()
+    # A full-day extraction must not overwrite the subset saved for FIELDS events.
+    suffix = f'_events_{fingerprint[:12]}' if event_df is not None else ''
+    dest = output_dir / product / (path.stem + suffix + '.npz')
+    manifest_file = Path(str(dest) + '.manifest.json')
     if resume and dest.is_file() and manifest_file.is_file():
         manifest = json.loads(manifest_file.read_text())
         coverage = manifest.get('coverage_csv')

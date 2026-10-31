@@ -252,6 +252,50 @@ python code/IS_O_IS/particle_data_reader.py --highres \
   --products second-rates --download --resume
 ```
 
+### Event-centered observation windows: 10 seconds before/after
+
+High-resolution EPI-Hi extraction now defaults to the exact FIELDS candidate
+duration **plus 10 seconds before and 10 seconds after each candidate**.
+Do not replace each candidate's duration with a fixed 8-minute interval:
+467 seconds is the median of 599 FIELDS candidates, so the median total
+observation window is **487 seconds (8 minutes 7 seconds)**.
+
+The reader accepts \`--before-seconds\` and \`--after-seconds\` (both default
+to 10). Older explicit \`--before-minutes\` and \`--after-minutes\` arguments
+remain supported for exploratory comparisons and override the seconds setting.
+
+Run the **nominal timing coverage audit**, including if downloads are still
+incomplete. It scans existing NPZ partitions, keeps detector products distinct,
+and verifies stored SHA-256 file manifests by default:
+
+\`\`\`bash
+python code/IS_O_IS/particle_coverage_audit.py --self-test
+python code/IS_O_IS/particle_coverage_audit.py \
+  --events-csv data/full_analysis_nov_dec_2018_candidates_strong_events.csv \
+  --before-seconds 10 --after-seconds 10
+\`\`\`
+
+The audit writes:
+- \`data/isois/highres/coverage_10s.csv\`: each candidate × product, with the
+  *nominal unfiltered* coverage fraction before, during and after; complete
+  integrations during the event; and two distinct timing-coverage indicators
+- \`data/isois/highres/coverage_10s.summary.json\`: product and total counts,
+  included source partitions, checksum failures and explicit science caveats
+
+A \`fine_10s_window_temporal_coverage\` result requires a product with at most
+10-second median integrations, at least 90% nominal integration coverage in
+each event segment, and at least three completely contained integrations
+during the event. \`precise_10s_flanks_approx_1s\` imposes tighter sampling:
+at most two-second integrations and at least five *complete* integrations in
+each 10-second flank. These are **operational timing checks**, not declarations
+of scientifically usable exposure, statistical significance or independent
+particle counts. In particular, a 60-second integration can overlap a 10-second
+flank but cannot isolate it from the switchback.
+
+Until the quality flags, energy-bin validity and Poisson count statistics are
+evaluated, **do not claim appropriate scientific coverage merely because the
+timing audit passes**. Missing source days are not quiet solar wind.
+
 ### Interrupted downloads and safe re-runs
 
 The public ISʘIS archive may disconnect during a long multi-day download.

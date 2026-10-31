@@ -1517,6 +1517,23 @@ def _epihi_self_test():
                for x in meta['skipped_zero_record_variables'])
     assert 'A_H_Flux' in result
 
+    # Read-only HET CDF inspection must distinguish declared, zero-record
+    # sectored rate arrays from actual observational coverage.
+    with TemporaryDirectory() as folder:
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import io
+        target = Path(folder) / 'het-rates300-test.cdf'
+        target.write_bytes(b'fake CDF for injected reader')
+        output = io.StringIO()
+        with patch('cdflib.CDF', return_value=hourly):
+            with redirect_stdout(output):
+                assert _epihi_main(['--inspect-cdf', str(target)]) == 0
+        assert 'A_CNO_SECT_Rate' in output.getvalue()
+        assert 'ZERO RECORDS' in output.getvalue()
+        assert 'Epoch records: 5' in output.getvalue()
+        assert list(Path(folder).iterdir()) == [target]
+
     # Synthetic transient disconnect and safe HTTP Range resume, no live network.
     import requests
     class FakeResponse:

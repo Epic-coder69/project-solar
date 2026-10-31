@@ -642,8 +642,14 @@ def main(argv=None):
                    help='Select EPI-Hi products (1s rates-only quicklook; 10s/60s energy-resolved science)')
     p.add_argument('--start', help='UTC YYYY-MM-DD inclusive')
     p.add_argument('--end', help='UTC YYYY-MM-DD exclusive')
-    p.add_argument('--before-minutes', type=float, default=30)
-    p.add_argument('--after-minutes', type=float, default=30)
+    p.add_argument('--before-seconds', type=float, default=10,
+                   help='Immediate pre-event observation window (default: 10 s)')
+    p.add_argument('--after-seconds', type=float, default=10,
+                   help='Immediate post-event observation window (default: 10 s)')
+    p.add_argument('--before-minutes', type=float, default=None,
+                   help='Legacy option overriding --before-seconds')
+    p.add_argument('--after-minutes', type=float, default=None,
+                   help='Legacy option overriding --after-seconds')
     p.add_argument('--day-halo', type=int, choices=(0,1), default=1)
     p.add_argument('--cache', type=Path, default=Path('data/isois/epihi_cdf'))
     p.add_argument('--output-dir', type=Path, default=Path('data/isois/highres'))
@@ -661,8 +667,12 @@ def main(argv=None):
         p.error('--offline and --download are mutually exclusive')
     if not 1 <= args.download_attempts <= 12:
         p.error('--download-attempts must be between 1 and 12')
-    if not np.isfinite(args.before_minutes) or not np.isfinite(args.after_minutes) \
-            or min(args.before_minutes, args.after_minutes) < 0:
+    before_seconds = (args.before_minutes*60 if args.before_minutes is not None
+                      else args.before_seconds)
+    after_seconds = (args.after_minutes*60 if args.after_minutes is not None
+                     else args.after_seconds)
+    if not np.isfinite(before_seconds) or not np.isfinite(after_seconds) \
+            or min(before_seconds, after_seconds) < 0:
         p.error('Invalid event padding')
     event_df, windows, catalog_hash = None, None, None
     if args.events_csv:
@@ -670,8 +680,11 @@ def main(argv=None):
             p.error('--events-csv cannot be combined with --start/--end')
         events = validate_fields_events(args.events_csv)
         event_df = build_event_windows(
-            events, before_minutes=args.before_minutes, after_minutes=args.after_minutes
+            events, before_minutes=before_seconds/60, after_minutes=after_seconds/60
         )
+        print(f'[EVENT WINDOWS] {len(events)} candidates, '
+              f'{before_seconds:g}s before + {after_seconds:g}s after each event',
+              flush=True)
         windows = merged_intervals(event_df)
         catalog_hash = _sha256(args.events_csv)
     results, missing, failures = [], [], []
@@ -683,6 +696,7 @@ def main(argv=None):
             'status': 'complete' if complete else 'partial',
             'fields_catalog': str(args.events_csv) if args.events_csv else None,
             'fields_catalog_sha256': catalog_hash,
+            'event_padding_seconds': {'before': before_seconds, 'after': after_seconds},
             'products': ([FILE_RE.fullmatch(args.file.name).group(1)]
                          if args.file else args.products),
             'files': results,

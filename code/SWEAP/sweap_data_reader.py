@@ -880,6 +880,23 @@ def extract_events(csv_path, output_dir, cache, products, *, max_events=0,
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list-products", action="store_true")
+    p.add_argument("--extract-events", action="store_true",
+                   help="Extract all available native SWEAP variables during exact FIELDS event intervals")
+    p.add_argument("--events-csv", type=Path, help="FIELDS CSV with event_start_utc and exclusive UTC end")
+    p.add_argument("--event-products", default="all",
+                   help="Comma-separated SWEAP keys; default all 13 products")
+    p.add_argument("--event-out", type=Path, default=Path("data/sweap/events"),
+                   help="NPZ archives, per-segment JSON and coverage manifest")
+    p.add_argument("--max-events", type=int, default=0,
+                   help="Only process the first N catalog events; 0 = all 599")
+    p.add_argument("--before-seconds", type=float, default=10,
+                   help="Additional seconds preceding the FIELDS event")
+    p.add_argument("--after-seconds", type=float, default=10,
+                   help="Additional seconds following the FIELDS event")
+    p.add_argument("--max-variable-mib", type=float, default=128,
+                   help="Maximum uncompressed bytes per individual event variable")
+    p.add_argument("--no-resume", dest="resume", action="store_false",
+                   help="Re-extract existing event NPZ archives")
     p.add_argument("--survey", action="store_true",
                    help="Inspect all 8 SWEAP measurement families / 13 public NASA product variants")
     p.add_argument("--catalog-only", action="store_true",
@@ -906,10 +923,39 @@ def main():
     if args.self_test:
         test()
         self_test()
+        event_self_test()
         return
     if args.list_products:
         for key, (family, dataset, _) in CATALOG.items():
             print(f"{key:25} {family:22} {dataset}")
+        return
+    if args.extract_events:
+        if args.survey:
+            p.error("Choose --survey or --extract-events, not both")
+        if args.events_csv is None or not args.events_csv.is_file():
+            p.error("--extract-events requires an existing --events-csv FIELDS catalog")
+        if args.max_events < 0:
+            p.error("--max-events must be >= 0 (0 means all events)")
+        if any(not np.isfinite(v) for v in
+               (args.before_seconds, args.after_seconds,
+                args.max_file_mib, args.max_total_mib, args.max_variable_mib)):
+            p.error("Event time and size limits must be finite numbers")
+        if args.before_seconds < 0 or args.after_seconds < 0:
+            p.error("Event flanks must be nonnegative")
+        if min(args.max_file_mib, args.max_total_mib, args.max_variable_mib) <= 0:
+            p.error("Event size limits must be positive")
+        event_products = (list(CATALOG) if args.event_products == "all"
+                          else [x.strip() for x in args.event_products.split(",") if x.strip()])
+        unknown = sorted(set(event_products) - set(CATALOG))
+        if unknown or not event_products:
+            p.error("Invalid --event-products: " + ", ".join(unknown or ["empty selection"]))
+        # Do not duplicate repeated product keys within one run.
+        event_products = list(dict.fromkeys(event_products))
+        extract_events(args.events_csv, args.event_out, args.cache_dir, event_products,
+                       max_events=args.max_events, before_seconds=args.before_seconds,
+                       after_seconds=args.after_seconds,
+                       max_file_mib=args.max_file_mib, max_total_mib=args.max_total_mib,
+                       max_variable_mib=args.max_variable_mib, resume=args.resume)
         return
     if args.survey:
         if not args.date:
